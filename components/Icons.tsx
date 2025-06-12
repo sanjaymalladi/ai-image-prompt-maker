@@ -47,4 +47,11 @@ export const WandSparklesIcon: React.FC<IconProps> = ({ className }) => (
   </svg>
 );
 
-// LightBulbIcon removed
+// Using a Heroicons 'squares-plus' icon:
+export const SquaresPlusIcon: React.FC<IconProps> = ({ className = "w-6 h-6" }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6.75c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6.75A1.125 1.125 0 012.25 10.875V7.125z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12.75 6h6.75c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6.75A1.125 1.125 0 0111.625 10.875V7.125c0-.621.504-1.125 1.125-1.125zM2.25 15.375C2.25 14.754 2.754 14.25 3.375 14.25h6.75c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6.75a1.125 1.125 0 01-1.125-1.125v-3.75z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12.75 15.375c0-.621.504-1.125 1.125-1.125h6.75c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6.75a1.125 1.125 0 01-1.125-1.125v-3.75zM12 12.75v2.25m0-2.25H9.75m2.25 0h2.25m-2.25 2.25V15m0-2.25V9.75M12 9.75H9.75M12 9.75h2.25" />
+    </svg>
+  );

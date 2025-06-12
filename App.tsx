@@ -5,47 +5,62 @@ import { fileToBase64WithType, FileConversionResult } from './utils/fileUtils';
 import { Button } from './components/Button';
 import { Spinner } from './components/Spinner';
 import { Alert } from './components/Alert';
-import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon } from './components/Icons';
-// Removed import for PromptingGuide
+import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon, SquaresPlusIcon } from './components/Icons';
 
-type InputMode = 'image' | 'text';
+type InputMode = 'image' | 'text' | 'imageFusion';
 
 interface GeneratedPromptItem {
-  id: string; // Unique ID for key prop, can be file name + timestamp
-  fileName: string; // For image mode, the original file name. For text mode, "Text Concept".
+  id: string; 
+  fileName: string; 
   prompt?: string;
   error?: string;
   isCopied: boolean;
-  // Store original input context for refinement
-  originalInput: { type: 'image'; file: File } | { type: 'text'; concept: string };
+  originalInput: 
+    | { type: 'image'; file: File } 
+    | { type: 'text'; concept: string }
+    | { type: 'imageFusion'; files: File[] };
 }
 
 const App: React.FC = () => {
   const [inputMode, setInputModeInternal] = useState<InputMode>('image');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null); // For single image preview in 'image' mode
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]); // For 'imageFusion' thumbnails
+
   const [textConcept, setTextConcept] = useState<string>('');
   
   const [generatedPrompts, setGeneratedPrompts] = useState<GeneratedPromptItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null); // General errors (e.g., file validation)
-  const [globalProcessingError, setGlobalProcessingError] = useState<string | null>(null); // Errors during API calls
+  const [error, setError] = useState<string | null>(null); 
+  const [globalProcessingError, setGlobalProcessingError] = useState<string | null>(null);
 
   const [suggestionsText, setSuggestionsText] = useState<string>('');
 
   const MAX_FILE_SIZE_MB = 4;
   const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-  const MAX_FILES_UPLOAD = 10;
+  
+  // Limits for 'image' mode (batch)
+  const MAX_FILES_BATCH_UPLOAD = 10;
 
-  const setInputMode = (mode: InputMode) => {
-    setInputModeInternal(mode);
+  // Limits for 'imageFusion' mode
+  const MIN_FILES_FUSION = 2;
+  const MAX_FILES_FUSION = 5;
+
+
+  const resetCommonStates = () => {
     setSelectedFiles([]);
     setPreviewUrl(null);
+    setImagePreviews([]);
     setTextConcept('');
     setGeneratedPrompts([]);
     setError(null);
     setGlobalProcessingError(null);
     setSuggestionsText('');
+  }
+
+  const setInputMode = (mode: InputMode) => {
+    setInputModeInternal(mode);
+    resetCommonStates();
   };
 
   const processFiles = useCallback((filesToProcess: FileList | File[]) => {
@@ -53,13 +68,18 @@ const App: React.FC = () => {
       return;
     }
 
+    let currentMaxFiles = inputMode === 'imageFusion' ? MAX_FILES_FUSION : MAX_FILES_BATCH_UPLOAD;
     const newValidFiles: File[] = [];
     const rejectedFilesMessages: string[] = [];
     let currentBatchError: string | null = null;
 
     Array.from(filesToProcess).forEach(file => {
-      if (newValidFiles.length + selectedFiles.length >= MAX_FILES_UPLOAD && !selectedFiles.find(sf => sf.name === file.name && sf.lastModified === file.lastModified)) {
-        rejectedFilesMessages.push(`${file.name} (limit of ${MAX_FILES_UPLOAD} files reached)`);
+      // For fusion mode, a new selection replaces old ones.
+      // For image batch, this logic allows adding to existing selection (though current UI replaces).
+      const currentFileCount = inputMode === 'imageFusion' ? newValidFiles.length : newValidFiles.length + selectedFiles.length;
+
+      if (currentFileCount >= currentMaxFiles && (inputMode === 'imageFusion' || !selectedFiles.find(sf => sf.name === file.name && sf.lastModified === file.lastModified))) {
+        rejectedFilesMessages.push(`${file.name} (limit of ${currentMaxFiles} files for this mode)`);
         return;
       }
       if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -73,18 +93,12 @@ const App: React.FC = () => {
       newValidFiles.push(file);
     });
     
-    setSelectedFiles(prevFiles => {
-        const combined = [...prevFiles];
-        newValidFiles.forEach(nf => {
-            if (!combined.some(ef => ef.name === nf.name && ef.lastModified === nf.lastModified)) {
-                combined.push(nf);
-            }
-        });
-        return combined.slice(0, MAX_FILES_UPLOAD);
-    });
+    // In fusion mode, new selection always replaces old.
+    // In image (batch) mode, it also replaces (as per handleFileChange behavior)
+    setSelectedFiles(newValidFiles.slice(0, currentMaxFiles));
 
     if (rejectedFilesMessages.length > 0) {
-      currentBatchError = `Some files were not added: ${rejectedFilesMessages.join(', ')}. Max ${MAX_FILES_UPLOAD} files, ${MAX_FILE_SIZE_MB}MB/file, images only.`;
+      currentBatchError = `Some files were not added: ${rejectedFilesMessages.join(', ')}. Max ${currentMaxFiles} files, ${MAX_FILE_SIZE_MB}MB/file, images only.`;
     }
     setError(currentBatchError); 
 
@@ -92,30 +106,50 @@ const App: React.FC = () => {
     setGeneratedPrompts([]);
     setGlobalProcessingError(null);
     setSuggestionsText('');
-  }, [selectedFiles, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_FILES_UPLOAD]);
+  }, [selectedFiles, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_FILES_BATCH_UPLOAD, inputMode, MIN_FILES_FUSION, MAX_FILES_FUSION]);
 
 
   useEffect(() => {
-    if (selectedFiles.length === 1) {
+    // Single image preview for 'image' mode
+    if (inputMode === 'image' && selectedFiles.length === 1) {
       const file = selectedFiles[0];
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
-      };
-      reader.onerror = () => {
-        setError("Error reading single image file for preview.");
-        setPreviewUrl(null);
-      };
+      reader.onloadend = () => setPreviewUrl(reader.result as string);
+      reader.onerror = () => { setError("Error reading image for preview."); setPreviewUrl(null); };
       reader.readAsDataURL(file);
     } else {
       setPreviewUrl(null);
     }
-  }, [selectedFiles]);
+
+    // Thumbnails for 'imageFusion' mode
+    if (inputMode === 'imageFusion' && selectedFiles.length > 0) {
+      const filePromises = selectedFiles.map(file => {
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+          reader.readAsDataURL(file);
+        });
+      });
+      Promise.all(filePromises)
+        .then(setImagePreviews)
+        .catch(err => {
+          console.error("Error reading files for fusion preview:", err);
+          setError("Error creating previews for fusion images.");
+          setImagePreviews([]);
+        });
+    } else {
+      setImagePreviews([]);
+    }
+  }, [selectedFiles, inputMode]);
 
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
+      // Always reset selection for a new dialog choice
       setSelectedFiles([]); 
+      setImagePreviews([]);
+      setPreviewUrl(null);
       processFiles(event.target.files);
     }
     if (event.target) {
@@ -124,7 +158,7 @@ const App: React.FC = () => {
   };
   
   const handlePaste = useCallback(async (event: ClipboardEvent) => {
-    if (inputMode !== 'image' || isLoading) return;
+    if ((inputMode !== 'image' && inputMode !== 'imageFusion') || isLoading) return;
     const items = event.clipboardData?.items;
     if (!items) return;
 
@@ -142,6 +176,12 @@ const App: React.FC = () => {
       }
     }
     if (pastedFiles.length > 0) {
+        // For paste, we usually want to add to current selection if in batch mode, or replace if fusion (processFiles handles replace for fusion)
+        // However, current processFiles always replaces. If additive paste is desired for batch mode, processFiles logic needs change.
+        // For now, consistent replacement.
+        setSelectedFiles([]); 
+        setImagePreviews([]);
+        setPreviewUrl(null);
         processFiles(pastedFiles);
         setError(null); 
     }
@@ -150,8 +190,11 @@ const App: React.FC = () => {
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (inputMode !== 'image' || isLoading) return;
+    if ((inputMode !== 'image' && inputMode !== 'imageFusion') || isLoading) return;
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      setSelectedFiles([]); 
+      setImagePreviews([]);
+      setPreviewUrl(null);
       processFiles(event.dataTransfer.files);
       event.dataTransfer.clearData();
     }
@@ -172,6 +215,7 @@ const App: React.FC = () => {
   const clearSelectedFiles = () => {
     setSelectedFiles([]);
     setPreviewUrl(null);
+    setImagePreviews([]);
     setGeneratedPrompts([]);
     setError(null);
     setGlobalProcessingError(null);
@@ -183,7 +227,7 @@ const App: React.FC = () => {
     setGeneratedPrompts([]);
     setError(null);
     setGlobalProcessingError(null);
-    setSuggestionsText(''); // Clear suggestions when generating new prompts
+    setSuggestionsText(''); 
 
     if (inputMode === 'image' && selectedFiles.length > 0) {
       const newPromptsPromises = selectedFiles.map(async (file) => {
@@ -202,7 +246,21 @@ const App: React.FC = () => {
       if (newPrompts.some(p => p.error)) {
         setGlobalProcessingError("Some images could not be processed. See details below.");
       }
-
+    } else if (inputMode === 'imageFusion' && selectedFiles.length >= MIN_FILES_FUSION && selectedFiles.length <= MAX_FILES_FUSION) {
+        const itemId = `fusion-${Date.now()}`;
+        const filesToFuse = [...selectedFiles]; // Make a copy
+        try {
+            const imageInputs = await Promise.all(filesToFuse.map(async (file) => {
+                const { base64, mimeType } = await fileToBase64WithType(file);
+                return { base64, mimeType };
+            }));
+            const promptText = await generateDetailedPrompt({ images: imageInputs });
+            setGeneratedPrompts([{ id: itemId, fileName: 'Fused Prompt', prompt: promptText, isCopied: false, originalInput: { type: 'imageFusion', files: filesToFuse } }]);
+        } catch (err: any) {
+            console.error("Error generating fused prompt:", err);
+            setGeneratedPrompts([{ id: itemId, fileName: 'Fused Prompt', error: err.message || "Failed to generate fused prompt.", isCopied: false, originalInput: { type: 'imageFusion', files: filesToFuse } }]);
+            setGlobalProcessingError(err.message || "Failed to generate fused prompt.");
+        }
     } else if (inputMode === 'text' && textConcept.trim() !== '') {
       const itemId = `text-${Date.now()}`;
       const currentTextConcept = textConcept.trim();
@@ -215,7 +273,9 @@ const App: React.FC = () => {
         setGlobalProcessingError(err.message || "Failed to generate prompt from text concept.");
       }
     } else {
-      setError(inputMode === 'image' ? "Please select one or more image files." : "Please enter a text concept.");
+      if (inputMode === 'image') setError("Please select one or more image files.");
+      else if (inputMode === 'imageFusion') setError(`Please select ${MIN_FILES_FUSION} to ${MAX_FILES_FUSION} images for fusion.`);
+      else setError("Please enter a text concept.");
     }
     setIsLoading(false);
   };
@@ -230,9 +290,8 @@ const App: React.FC = () => {
     setGlobalProcessingError(null);
 
     const refinementPromises = generatedPrompts.map(async (item) => {
-      // Only refine items that were successful initially
       if (!item.prompt || item.error) {
-        return item; // Keep error items as they are
+        return item; 
       }
 
       try {
@@ -241,9 +300,17 @@ const App: React.FC = () => {
           const { base64, mimeType } = await fileToBase64WithType(item.originalInput.file);
           refinedPromptText = await generateDetailedPrompt({ 
             image: { base64, mimeType }, 
-            refinementSuggestions: suggestionsText.trim(),
-            originalTextConcept: undefined // Not used for image refinement in service
+            refinementSuggestions: suggestionsText.trim()
           });
+        } else if (item.originalInput.type === 'imageFusion') {
+            const imageInputs = await Promise.all(item.originalInput.files.map(async (file) => {
+                const { base64, mimeType } = await fileToBase64WithType(file);
+                return { base64, mimeType };
+            }));
+            refinedPromptText = await generateDetailedPrompt({
+                images: imageInputs,
+                refinementSuggestions: suggestionsText.trim()
+            });
         } else if (item.originalInput.type === 'text') {
           refinedPromptText = await generateDetailedPrompt({ 
             textConcept: item.originalInput.concept, 
@@ -259,7 +326,7 @@ const App: React.FC = () => {
 
     const refinedPrompts = await Promise.all(refinementPromises);
     setGeneratedPrompts(refinedPrompts);
-    if (refinedPrompts.some(p => p.error && generatedPrompts.find(op => op.id === p.id)?.prompt)) { // Check if a previously successful prompt now has an error
+    if (refinedPrompts.some(p => p.error && generatedPrompts.find(op => op.id === p.id)?.prompt)) { 
       setGlobalProcessingError("Some prompts could not be refined. See details below.");
     }
     setIsLoading(false);
@@ -285,36 +352,56 @@ const App: React.FC = () => {
 
   const canSubmit = (): boolean => {
     if (isLoading) return false;
-    if (inputMode === 'image') return selectedFiles.length > 0;
+    if (inputMode === 'image') return selectedFiles.length > 0 && selectedFiles.length <= MAX_FILES_BATCH_UPLOAD;
+    if (inputMode === 'imageFusion') return selectedFiles.length >= MIN_FILES_FUSION && selectedFiles.length <= MAX_FILES_FUSION;
     if (inputMode === 'text') return textConcept.trim().length > 0;
     return false;
   };
 
   const hasSuccessfulPrompts = generatedPrompts.some(p => p.prompt && !p.error);
   
+  const getUploadAreaMessage = () => {
+    if (inputMode === 'imageFusion') {
+      if (selectedFiles.length > 0 && selectedFiles.length < MIN_FILES_FUSION) {
+        return `Need ${MIN_FILES_FUSION - selectedFiles.length} more image(s) for fusion. (Min ${MIN_FILES_FUSION}, Max ${MAX_FILES_FUSION})`;
+      }
+      return `Drag & drop ${MIN_FILES_FUSION}-${MAX_FILES_FUSION} images, or click.`;
+    }
+    // Default for 'image' mode
+    return `${selectedFiles.length > 0 && selectedFiles.length < MAX_FILES_BATCH_UPLOAD ? `Add more or ` : ''}Drag & drop images, or click.`;
+  };
+
   return (
     <div className="min-h-screen bg-zinc-900 text-gray-100 flex flex-col items-center p-4 md:p-8 selection:bg-sky-500 selection:text-white">
       <div className="w-full max-w-3xl space-y-8">
         <header className="text-center">
           <h1 className="text-4xl md:text-5xl font-bold text-sky-400">Detailed Prompt Generator AI</h1>
           <p className="mt-3 text-lg text-gray-400">
-            Craft the perfect prompt for your AI image creations. Refine with suggestions for even better results.
+            Craft the perfect prompt. Use single images, fuse multiple, or start with a text concept. Refine with suggestions.
           </p>
         </header>
 
-        <div className="flex justify-center bg-zinc-800 p-1 rounded-lg shadow-md">
+        <div className="flex flex-col sm:flex-row justify-center bg-zinc-800 p-1 rounded-lg shadow-md gap-1">
           <button
             onClick={() => setInputMode('image')}
             aria-pressed={inputMode === 'image'}
-            className={`px-6 py-3 font-medium rounded-md flex items-center gap-2 transition-colors duration-200 ease-in-out
+            className={`flex-1 sm:flex-auto px-4 py-3 font-medium rounded-md flex items-center justify-center gap-2 transition-colors duration-200 ease-in-out
                         ${inputMode === 'image' ? 'bg-sky-600 text-white shadow-lg' : 'text-gray-400 hover:bg-zinc-700 hover:text-gray-200'}`}
           >
-            <UploadIcon className="w-5 h-5" /> Image Input
+            <UploadIcon className="w-5 h-5" /> Image Batch
+          </button>
+          <button
+            onClick={() => setInputMode('imageFusion')}
+            aria-pressed={inputMode === 'imageFusion'}
+            className={`flex-1 sm:flex-auto px-4 py-3 font-medium rounded-md flex items-center justify-center gap-2 transition-colors duration-200 ease-in-out
+                        ${inputMode === 'imageFusion' ? 'bg-sky-600 text-white shadow-lg' : 'text-gray-400 hover:bg-zinc-700 hover:text-gray-200'}`}
+          >
+            <SquaresPlusIcon className="w-5 h-5" /> Image Fusion
           </button>
           <button
             onClick={() => setInputMode('text')}
             aria-pressed={inputMode === 'text'}
-            className={`px-6 py-3 font-medium rounded-md flex items-center gap-2 transition-colors duration-200 ease-in-out
+            className={`flex-1 sm:flex-auto px-4 py-3 font-medium rounded-md flex items-center justify-center gap-2 transition-colors duration-200 ease-in-out
                         ${inputMode === 'text' ? 'bg-sky-600 text-white shadow-lg' : 'text-gray-400 hover:bg-zinc-700 hover:text-gray-200'}`}
           >
             <TextIcon className="w-5 h-5" /> Text Concept
@@ -325,7 +412,7 @@ const App: React.FC = () => {
         {globalProcessingError && <Alert type="error" message={globalProcessingError} onClose={() => setGlobalProcessingError(null)} />}
 
         <div className="bg-zinc-800 p-6 rounded-xl shadow-xl">
-          {inputMode === 'image' ? (
+          {inputMode === 'image' || inputMode === 'imageFusion' ? (
             <div 
               className="border-2 border-dashed border-zinc-600 hover:border-sky-500 rounded-lg p-6 md:p-10 text-center cursor-pointer transition-colors duration-200"
               onDrop={handleDrop}
@@ -333,7 +420,7 @@ const App: React.FC = () => {
               onClick={() => document.getElementById('fileInput')?.click()}
               role="button"
               tabIndex={0}
-              aria-label="Image upload area: drag and drop or click to select files"
+              aria-label={`Image upload area: ${inputMode === 'imageFusion' ? `drag and drop ${MIN_FILES_FUSION}-${MAX_FILES_FUSION} images or click` : 'drag and drop or click to select files'}`}
             >
               <input
                 type="file"
@@ -344,30 +431,43 @@ const App: React.FC = () => {
                 className="hidden"
                 aria-hidden="true"
               />
-              {previewUrl && selectedFiles.length === 1 ? (
+              {inputMode === 'image' && previewUrl && selectedFiles.length === 1 ? (
                 <img src={previewUrl} alt="Selected preview" className="max-h-60 w-auto mx-auto rounded-md shadow-md mb-4 object-contain" />
-              ) : selectedFiles.length > 0 ? (
+              ) : inputMode === 'image' && selectedFiles.length > 0 ? (
                  <div className="mb-4 text-left">
-                    <h3 className="font-semibold text-sky-400 mb-2">Selected Files ({selectedFiles.length}/{MAX_FILES_UPLOAD}):</h3>
+                    <h3 className="font-semibold text-sky-400 mb-2">Selected Files ({selectedFiles.length}/{MAX_FILES_BATCH_UPLOAD}):</h3>
                     <ul className="list-disc list-inside text-gray-300 max-h-40 overflow-y-auto space-y-1 text-sm pretty-scrollbar pr-2">
                         {selectedFiles.map(file => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
                     </ul>
                  </div>
+              ) : inputMode === 'imageFusion' && imagePreviews.length > 0 ? (
+                <div className="mb-4">
+                  <h3 className="font-semibold text-sky-400 mb-2 text-left">Selected Images for Fusion ({imagePreviews.length}/{MAX_FILES_FUSION}):</h3>
+                  <div className="flex flex-wrap justify-center gap-2 max-h-60 overflow-y-auto pretty-scrollbar p-1">
+                    {imagePreviews.map((src, index) => (
+                      <img key={index} src={src} alt={`Fusion preview ${index + 1}`} className="h-20 w-20 object-cover rounded-md shadow-md border border-zinc-700" />
+                    ))}
+                  </div>
+                </div>
               ) : (
-                <UploadIcon className="w-16 h-16 text-zinc-500 mx-auto mb-4" />
+                 <div className="flex flex-col items-center">
+                    {inputMode === 'imageFusion' ? <SquaresPlusIcon className="w-16 h-16 text-zinc-500 mx-auto mb-4" /> : <UploadIcon className="w-16 h-16 text-zinc-500 mx-auto mb-4" /> }
+                 </div>
               )}
-              <p className="text-gray-400">
-                {selectedFiles.length > 0 && selectedFiles.length < MAX_FILES_UPLOAD ? `Add more or ` : ''}
-                Drag & drop images here, or click to browse.
+              <p className="text-gray-400">{getUploadAreaMessage()}</p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {inputMode === 'imageFusion' 
+                  ? `Min ${MIN_FILES_FUSION}, Max ${MAX_FILES_FUSION} images. ` 
+                  : `Max ${MAX_FILES_BATCH_UPLOAD} files. `}
+                {MAX_FILE_SIZE_MB}MB per image. PNG, JPG, GIF, WEBP.
               </p>
-              <p className="text-xs text-zinc-500 mt-1">Max {MAX_FILES_UPLOAD} files, {MAX_FILE_SIZE_MB}MB per image. PNG, JPG, GIF, WEBP.</p>
               {selectedFiles.length > 0 && (
                 <Button variant="secondary" onClick={(e) => { e.stopPropagation(); clearSelectedFiles(); }} className="mt-4 text-sm !py-1.5 !px-3">
                     <XCircleIcon className="w-4 h-4" /> Clear Selection
                 </Button>
               )}
             </div>
-          ) : (
+          ) : ( // Text mode
             <textarea
               value={textConcept}
               onChange={(e) => setTextConcept(e.target.value)}
@@ -381,16 +481,25 @@ const App: React.FC = () => {
             onClick={handleSubmit} 
             disabled={!canSubmit()}
             className="w-full mt-6 text-lg"
-            aria-label={inputMode === 'image' ? "Generate detailed prompts from selected images" : "Generate detailed prompt from text concept"}
+            aria-label={
+                inputMode === 'image' ? "Generate detailed prompts from selected images" :
+                inputMode === 'imageFusion' ? "Generate single fused prompt from selected images" :
+                "Generate detailed prompt from text concept"
+            }
           >
             {isLoading && generatedPrompts.length === 0 ? <Spinner /> : <SparklesIcon className="w-5 h-5"/>}
-            Generate Detailed Prompt{selectedFiles.length > 1 ? 's' : ''}
+            {inputMode === 'imageFusion' 
+                ? 'Generate Fused Prompt' 
+                : `Generate Detailed Prompt${inputMode === 'image' && selectedFiles.length > 1 ? 's' : ''}`
+            }
           </Button>
         </div>
 
         {generatedPrompts.length > 0 && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-semibold text-sky-400">Generated Prompt{generatedPrompts.length > 1 ? 's' : ''}</h2>
+            <h2 className="text-2xl font-semibold text-sky-400">
+                {inputMode === 'imageFusion' ? 'Generated Fused Prompt' : `Generated Prompt${generatedPrompts.length > 1 ? 's' : ''}`}
+            </h2>
             {generatedPrompts.map((item) => (
               <div key={item.id} className="bg-zinc-800 p-5 rounded-lg shadow-lg">
                 <h3 className="font-medium text-gray-300 mb-1">{item.fileName}</h3>
@@ -435,12 +544,10 @@ const App: React.FC = () => {
               aria-label="Refine generated prompts with the provided suggestions"
             >
               {isLoading && suggestionsText.trim() !== '' ? <Spinner /> : <WandSparklesIcon className="w-5 h-5" />}
-              Refine Prompt{generatedPrompts.filter(p=>p.prompt && !p.error).length > 1 ? 's' : ''} with Suggestions
+              Refine Prompt{generatedPrompts.filter(p=>p.prompt && !p.error).length > 1 && inputMode !== 'imageFusion' ? 's' : ''} with Suggestions
             </Button>
           </div>
         )}
-
-        {/* PromptingGuide component removed from here */}
 
       </div>
        <footer className="w-full max-w-3xl mt-12 mb-8 text-center text-sm text-gray-500">
@@ -452,15 +559,15 @@ const App: React.FC = () => {
           height: 6px;
         }
         .pretty-scrollbar::-webkit-scrollbar-track {
-          background: rgba(55, 65, 81, 0.5); /* gray-700 with opacity */
+          background: rgba(55, 65, 81, 0.5); 
           border-radius: 3px;
         }
         .pretty-scrollbar::-webkit-scrollbar-thumb {
-          background: #38bdf8; /* sky-500 */
+          background: #38bdf8; 
           border-radius: 3px;
         }
         .pretty-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #0ea5e9; /* sky-600 */
+          background: #0ea5e9; 
         }
         .pretty-scrollbar {
           scrollbar-width: thin;
