@@ -1,0 +1,6 @@
+{
+  "name": "Detailed Prompt Generator AI",
+  "description": "Provide an image (upload, paste, or drag & drop) or enter a text concept to generate a detailed text prompt, optimized for AI image generation models. This tool helps craft descriptive prompts by analyzing visual inputs or elaborating on textual ideas.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
