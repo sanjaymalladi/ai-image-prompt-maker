@@ -5,7 +5,7 @@ import { fileToBase64WithType, FileConversionResult } from './utils/fileUtils';
 import { Button } from './components/Button';
 import { Spinner } from './components/Spinner';
 import { Alert } from './components/Alert';
-import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon, SquaresPlusIcon, UserCircleIcon, ShirtIcon } from './components/Icons';
+import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon, SquaresPlusIcon, UserCircleIcon, ShirtIcon, PhotoIcon, UserGroupIcon } from './components/Icons';
 
 
 type InputMode = 'image' | 'text' | 'imageFusion' | 'characterSheet' | 'fashionPrompt';
@@ -67,6 +67,11 @@ const App: React.FC = () => {
   // State for Fashion Prompting Mode
   const [fashionGarmentFiles, setFashionGarmentFiles] = useState<File[]>([]);
   const [fashionGarmentPreviewUrls, setFashionGarmentPreviewUrls] = useState<string[]>([]);
+  const [fashionBackgroundRefFiles, setFashionBackgroundRefFiles] = useState<File[]>([]);
+  const [fashionBackgroundRefPreviewUrls, setFashionBackgroundRefPreviewUrls] = useState<string[]>([]);
+  const [fashionModelRefFiles, setFashionModelRefFiles] = useState<File[]>([]);
+  const [fashionModelRefPreviewUrls, setFashionModelRefPreviewUrls] = useState<string[]>([]);
+
   const [fashionIsLoadingAnalysis, setFashionIsLoadingAnalysis] = useState<boolean>(false);
   const [fashionAnalysisError, setFashionAnalysisError] = useState<string | null>(null);
   const [fashionPromptData, setFashionPromptData] = useState<FashionPromptData | null>(null);
@@ -87,6 +92,8 @@ const App: React.FC = () => {
   const MAX_FILES_FUSION = 5;
   const MAX_FILES_CHARACTER_SHEET = 1;
   const MAX_FILES_FASHION_PROMPT = 2; // Can be 1 or 2
+  const MAX_FILES_FASHION_BACKGROUND_REF = 3;
+  const MAX_FILES_FASHION_MODEL_REF = 3;
 
 
   const resetCommonStates = () => {
@@ -106,6 +113,10 @@ const App: React.FC = () => {
     // Reset fashion states
     setFashionGarmentFiles([]);
     setFashionGarmentPreviewUrls([]);
+    setFashionBackgroundRefFiles([]);
+    setFashionBackgroundRefPreviewUrls([]);
+    setFashionModelRefFiles([]);
+    setFashionModelRefPreviewUrls([]);
     setFashionIsLoadingAnalysis(false);
     setFashionAnalysisError(null);
     setFashionPromptData(null);
@@ -122,21 +133,41 @@ const App: React.FC = () => {
     resetCommonStates();
   };
 
-  const processFiles = useCallback(async (filesToProcess: FileList | File[]) => {
+  const processFiles = useCallback(async (
+    filesToProcess: FileList | File[], 
+    fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general'
+  ) => {
     if (!filesToProcess || filesToProcess.length === 0) {
       return;
     }
 
     let currentMaxFiles;
-    if (inputMode === 'imageFusion') {
-        currentMaxFiles = MAX_FILES_FUSION;
-    } else if (inputMode === 'characterSheet') {
-        currentMaxFiles = MAX_FILES_CHARACTER_SHEET;
-    } else if (inputMode === 'fashionPrompt') {
-        currentMaxFiles = MAX_FILES_FASHION_PROMPT;
-    }
-     else { // image mode
-        currentMaxFiles = MAX_FILES_BATCH_UPLOAD;
+    let currentFilesArray: File[];
+    let setFilesFunction: React.Dispatch<React.SetStateAction<File[]>>;
+
+    switch(fileType) {
+        case 'garment':
+            currentMaxFiles = MAX_FILES_FASHION_PROMPT;
+            currentFilesArray = fashionGarmentFiles;
+            setFilesFunction = setFashionGarmentFiles;
+            break;
+        case 'backgroundRef':
+            currentMaxFiles = MAX_FILES_FASHION_BACKGROUND_REF;
+            currentFilesArray = fashionBackgroundRefFiles;
+            setFilesFunction = setFashionBackgroundRefFiles;
+            break;
+        case 'modelRef':
+            currentMaxFiles = MAX_FILES_FASHION_MODEL_REF;
+            currentFilesArray = fashionModelRefFiles;
+            setFilesFunction = setFashionModelRefFiles;
+            break;
+        default: // 'general'
+            if (inputMode === 'imageFusion') currentMaxFiles = MAX_FILES_FUSION;
+            else if (inputMode === 'characterSheet') currentMaxFiles = MAX_FILES_CHARACTER_SHEET;
+            else currentMaxFiles = MAX_FILES_BATCH_UPLOAD; // image mode
+            currentFilesArray = selectedFiles;
+            setFilesFunction = setSelectedFiles;
+            break;
     }
     
     const newValidFiles: File[] = [];
@@ -144,16 +175,17 @@ const App: React.FC = () => {
     let currentBatchError: string | null = null;
 
     Array.from(filesToProcess).forEach(file => {
-      const currentFileCountForRejectionCheck = inputMode === 'fashionPrompt' || inputMode === 'characterSheet' || inputMode === 'imageFusion'
-                                          ? newValidFiles.length
-                                          : selectedFiles.length + newValidFiles.length;
+      // For fashion-specific types or single-add modes, we check newValidFiles.length.
+      // For general batch (image mode with multiple), we check combined length.
+      const countForRejectionCheck = (fileType !== 'general' || inputMode === 'characterSheet' || inputMode === 'imageFusion')
+                                        ? newValidFiles.length
+                                        : currentFilesArray.length + newValidFiles.length;
 
-
-      if (currentFileCountForRejectionCheck >= currentMaxFiles &&
-          (inputMode === 'fashionPrompt' || inputMode === 'characterSheet' || inputMode === 'imageFusion' || !selectedFiles.find(sf => sf.name === file.name && sf.lastModified === file.lastModified))
-      ) {
-         if(!(inputMode === 'image' && currentFileCountForRejectionCheck < currentMaxFiles)) { 
-            rejectedFilesMessages.push(`${file.name} (limit of ${currentMaxFiles} file${currentMaxFiles > 1 ? 's' : ''} for this mode reached)`);
+      if (countForRejectionCheck >= currentMaxFiles && 
+          (fileType !== 'general' || !currentFilesArray.find(sf => sf.name === file.name && sf.lastModified === file.lastModified))) 
+      {
+         if(!(inputMode === 'image' && fileType === 'general' && countForRejectionCheck < currentMaxFiles)) { 
+            rejectedFilesMessages.push(`${file.name} (limit of ${currentMaxFiles} file${currentMaxFiles > 1 ? 's' : ''} for this type reached)`);
             return;
         }
       }
@@ -168,65 +200,63 @@ const App: React.FC = () => {
       newValidFiles.push(file);
     });
     
-    if (inputMode === 'fashionPrompt') {
-        setFashionGarmentFiles(newValidFiles.slice(0, MAX_FILES_FASHION_PROMPT)); 
+    // For fashion types, replace current files. For general batch, append or replace based on context.
+    if (fileType !== 'general') {
+        setFilesFunction(newValidFiles.slice(0, currentMaxFiles));
     } else {
         const combinedFiles = (inputMode === 'image' && (event?.target as HTMLInputElement)?.multiple) 
-                                ? [...selectedFiles, ...newValidFiles].slice(0, currentMaxFiles) 
+                                ? [...currentFilesArray, ...newValidFiles].slice(0, currentMaxFiles) 
                                 : newValidFiles.slice(0, currentMaxFiles);
-        setSelectedFiles(combinedFiles);
+        setFilesFunction(combinedFiles);
     }
-
 
     if (rejectedFilesMessages.length > 0) {
       currentBatchError = `Some files were not added: ${rejectedFilesMessages.join(', ')}. Max ${currentMaxFiles} file${currentMaxFiles > 1 ? 's' : ''}, ${MAX_FILE_SIZE_MB}MB/file, images only.`;
     }
     setError(currentBatchError); 
 
-    // Clear states that depend on the files being processed, but not the files themselves yet
-    setTextConcept(''); // If switching from text mode implicitly
-    setGeneratedPrompts([]);
-    setCharacterSheetPrompts([]); // Cleared here, will be refilled if mode is characterSheet and processing is successful
-    setGlobalProcessingError(null);
-    setSuggestionsText('');
-    setCharacterSheetSuggestionsText('');
-    // characterSheetImageInput is handled below specifically for characterSheet mode
+    // Clear states dependent on general file processing if it's general, or specific fashion states
+    if (fileType === 'general') {
+        setTextConcept(''); 
+        setGeneratedPrompts([]);
+        setCharacterSheetPrompts([]); 
+        setGlobalProcessingError(null);
+        setSuggestionsText('');
+        setCharacterSheetSuggestionsText('');
 
-    // Use the latest files state for character sheet processing
-    const filesForCharSheet = inputMode === 'fashionPrompt' ? [] : selectedFiles;
-
-    if (inputMode === 'characterSheet') {
-        if (filesForCharSheet.length === 1) {
-            try {
-                const imageInput = await fileToBase64WithType(filesForCharSheet[0]);
-                setCharacterSheetImageInput(imageInput);
-                if (currentBatchError) setError(currentBatchError); // Prioritize batch error if imageInput is fine
-                else setError(null); // Clear error if conversion is successful and no batch error
-            } catch (err: any) {
-                const specificErrorMsg = `Error processing image for character sheet: ${err.message || 'Unknown error'}. Please try a different image.`;
-                console.error(specificErrorMsg, err);
-                setError(specificErrorMsg);
+        if (inputMode === 'characterSheet') {
+            const filesForCharSheet = selectedFiles; // Use the just-updated selectedFiles state
+            if (filesForCharSheet.length === 1 && newValidFiles.length > 0) { // Check if new valid file was added for CS
+                try {
+                    const imageInput = await fileToBase64WithType(filesForCharSheet[0]);
+                    setCharacterSheetImageInput(imageInput);
+                    if (currentBatchError) setError(currentBatchError);
+                    else setError(null);
+                } catch (err: any) {
+                    const specificErrorMsg = `Error processing image for character sheet: ${err.message || 'Unknown error'}. Please try a different image.`;
+                    setError(specificErrorMsg);
+                    setCharacterSheetImageInput(null);
+                }
+            } else if (filesForCharSheet.length !== 1) {
                 setCharacterSheetImageInput(null);
+                if (filesForCharSheet.length > 1 && !currentBatchError) {
+                     setError(`Please select only ${MAX_FILES_CHARACTER_SHEET} image for Character Sheet mode.`)
+                } else if (currentBatchError) {
+                    setError(currentBatchError);
+                }
             }
         } else {
-            // If not exactly one file for character sheet (e.g. 0 valid files processed, or multiple selected initially for other modes)
-            // It should already be null from handleFileChange/paste/drop or resetCommonStates, but ensure it is.
             setCharacterSheetImageInput(null);
-            if (filesForCharSheet.length > 1 && !currentBatchError) {
-                 setError(`Please select only ${MAX_FILES_CHARACTER_SHEET} image for Character Sheet mode.`)
-            } else if (currentBatchError) {
-                setError(currentBatchError); // Show batch error if any
-            }
         }
-    } else {
-        // For any other mode, ensure characterSheetImageInput is null
-        setCharacterSheetImageInput(null);
-    }
+    } else if (fileType === 'garment') { // Fashion garment file change, clear subsequent fashion states
+        clearSubsequentFashionStates();
+    } // For background/model refs, no need to clear subsequent states beyond their own previews.
 
-  }, [selectedFiles, fashionGarmentFiles, inputMode, MAX_FILES_CHARACTER_SHEET, MAX_FILES_FASHION_PROMPT, MAX_FILES_FUSION, MAX_FILES_BATCH_UPLOAD, MAX_FILE_SIZE_BYTES]);
+  }, [selectedFiles, fashionGarmentFiles, fashionBackgroundRefFiles, fashionModelRefFiles, inputMode, MAX_FILES_CHARACTER_SHEET, MAX_FILES_FASHION_PROMPT, MAX_FILES_FASHION_BACKGROUND_REF, MAX_FILES_FASHION_MODEL_REF, MAX_FILES_FUSION, MAX_FILES_BATCH_UPLOAD, MAX_FILE_SIZE_BYTES]);
 
 
   useEffect(() => {
+    // Standard Image/Character Sheet Previews
     if ((inputMode === 'image' || inputMode === 'characterSheet') && selectedFiles.length === 1) {
       const file = selectedFiles[0];
       const reader = new FileReader();
@@ -235,51 +265,91 @@ const App: React.FC = () => {
       reader.readAsDataURL(file);
     } else if (inputMode === 'image' && selectedFiles.length > 1) {
       setPreviewUrl(null); 
-    } else if (inputMode !== 'fashionPrompt' && inputMode !== 'imageFusion') { 
+    } else if (inputMode !== 'fashionPrompt' && inputMode !== 'imageFusion' && inputMode !== 'characterSheet') { 
       setPreviewUrl(null);
     }
 
+    // Image Fusion Previews
     if (inputMode === 'imageFusion' && selectedFiles.length > 0) {
-      const filePromises = selectedFiles.map(file => {
-        return new Promise<string>((resolve, reject) => {
+      const filePromises = selectedFiles.map(file => 
+        new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
           reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
           reader.readAsDataURL(file);
-        });
-      });
+        })
+      );
       Promise.all(filePromises)
         .then(setImagePreviews)
         .catch(err => {
-          console.error("Error reading files for fusion preview:", err);
           setError("Error creating previews for fusion images.");
           setImagePreviews([]);
         });
-    } else if (inputMode !== 'imageFusion' && inputMode !== 'fashionPrompt' ) {
+    } else if (inputMode !== 'imageFusion') {
       setImagePreviews([]);
     }
 
+    // Fashion Garment Previews
     if (inputMode === 'fashionPrompt' && fashionGarmentFiles.length > 0) {
-        const filePromises = fashionGarmentFiles.map(file => {
-            return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = () => reject(new Error(`Failed to read ${file.name} for fashion preview.`));
-            reader.readAsDataURL(file);
-            });
-        });
+        const filePromises = fashionGarmentFiles.map(file => 
+            new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = () => reject(new Error(`Failed to read ${file.name} for fashion garment preview.`));
+                reader.readAsDataURL(file);
+            })
+        );
         Promise.all(filePromises)
             .then(setFashionGarmentPreviewUrls)
             .catch(err => {
-                console.error("Error reading files for fashion preview:", err);
                 setError(err.message || "Error creating previews for fashion garment images.");
                 setFashionGarmentPreviewUrls([]);
             });
     } else if (inputMode !== 'fashionPrompt') {
        setFashionGarmentPreviewUrls([]);
     }
+    
+    // Fashion Background Reference Previews
+    if (inputMode === 'fashionPrompt' && fashionBackgroundRefFiles.length > 0) {
+        const filePromises = fashionBackgroundRefFiles.map(file => 
+            new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = () => reject(new Error(`Failed to read ${file.name} for background ref preview.`));
+                reader.readAsDataURL(file);
+            })
+        );
+        Promise.all(filePromises)
+            .then(setFashionBackgroundRefPreviewUrls)
+            .catch(err => {
+                setError(err.message || "Error creating previews for background reference images.");
+                setFashionBackgroundRefPreviewUrls([]);
+            });
+    } else if (inputMode !== 'fashionPrompt') {
+       setFashionBackgroundRefPreviewUrls([]);
+    }
 
-  }, [selectedFiles, inputMode, fashionGarmentFiles]);
+    // Fashion Model Reference Previews
+    if (inputMode === 'fashionPrompt' && fashionModelRefFiles.length > 0) {
+        const filePromises = fashionModelRefFiles.map(file => 
+            new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = () => reject(new Error(`Failed to read ${file.name} for model ref preview.`));
+                reader.readAsDataURL(file);
+            })
+        );
+        Promise.all(filePromises)
+            .then(setFashionModelRefPreviewUrls)
+            .catch(err => {
+                setError(err.message || "Error creating previews for model reference images.");
+                setFashionModelRefPreviewUrls([]);
+            });
+    } else if (inputMode !== 'fashionPrompt') {
+       setFashionModelRefPreviewUrls([]);
+    }
+
+  }, [selectedFiles, inputMode, fashionGarmentFiles, fashionBackgroundRefFiles, fashionModelRefFiles]);
 
 
   const clearSubsequentFashionStates = () => {
@@ -292,20 +362,30 @@ const App: React.FC = () => {
     setFashionInitialJsonPromptCopied(false);
   };
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
     if (event.target.files) {
-      const target = event.target as HTMLInputElement; // Cast to HTMLInputElement
-      if (inputMode === 'fashionPrompt') {
+      const target = event.target as HTMLInputElement; 
+      if (fileType === 'garment') {
           setFashionGarmentFiles([]); 
           setFashionGarmentPreviewUrls([]);
+          clearSubsequentFashionStates(); // Garment change affects everything after
+      } else if (fileType === 'backgroundRef') {
+          setFashionBackgroundRefFiles([]);
+          setFashionBackgroundRefPreviewUrls([]);
+           // BG ref change also invalidates prior analysis
+          clearSubsequentFashionStates();
+      } else if (fileType === 'modelRef') {
+          setFashionModelRefFiles([]);
+          setFashionModelRefPreviewUrls([]);
+           // Model ref change also invalidates prior analysis
           clearSubsequentFashionStates();
       } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && !target.multiple) ) {
           setSelectedFiles([]); 
           setImagePreviews([]);
           setPreviewUrl(null);
-          setCharacterSheetImageInput(null); // Explicitly clear before processing
+          setCharacterSheetImageInput(null); 
       }
-      processFiles(event.target.files);
+      processFiles(event.target.files, fileType);
     }
     if (event.target) {
         (event.target as HTMLInputElement).value = ''; 
@@ -314,6 +394,7 @@ const App: React.FC = () => {
   
   const handlePaste = useCallback(async (event: ClipboardEvent) => {
     if ((inputMode !== 'image' && inputMode !== 'imageFusion' && inputMode !== 'characterSheet' && inputMode !== 'fashionPrompt') || isLoading || fashionIsLoadingAnalysis || fashionQaIsLoading) return;
+    
     const items = event.clipboardData?.items;
     if (!items) return;
 
@@ -334,35 +415,45 @@ const App: React.FC = () => {
         if (inputMode === 'fashionPrompt') {
             setFashionGarmentFiles([]); 
             setFashionGarmentPreviewUrls([]);
-            clearSubsequentFashionStates();
+            clearSubsequentFashionStates(); 
+            processFiles(pastedFiles, 'garment');
         } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && pastedFiles.length === 1) ) {
             setSelectedFiles([]); 
             setImagePreviews([]);
             setPreviewUrl(null);
-            setCharacterSheetImageInput(null); // Explicitly clear before processing
+            setCharacterSheetImageInput(null); 
+            processFiles(pastedFiles, 'general');
+        } else if (inputMode === 'image') { 
+            processFiles(pastedFiles, 'general');
         }
-        processFiles(pastedFiles);
-        // setError(null); // processFiles will set its own errors
     }
   }, [inputMode, isLoading, fashionIsLoadingAnalysis, fashionQaIsLoading, processFiles]);
 
-  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
     event.preventDefault();
     event.stopPropagation();
     if ((inputMode !== 'image' && inputMode !== 'imageFusion' && inputMode !== 'characterSheet' && inputMode !== 'fashionPrompt') || isLoading || fashionIsLoadingAnalysis || fashionQaIsLoading) return;
     
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
-      if (inputMode === 'fashionPrompt') {
+      if (fileType === 'garment') {
           setFashionGarmentFiles([]); 
           setFashionGarmentPreviewUrls([]);
+          clearSubsequentFashionStates();
+      } else if (fileType === 'backgroundRef') {
+          setFashionBackgroundRefFiles([]);
+          setFashionBackgroundRefPreviewUrls([]);
+          clearSubsequentFashionStates();
+      } else if (fileType === 'modelRef') {
+          setFashionModelRefFiles([]);
+          setFashionModelRefPreviewUrls([]);
           clearSubsequentFashionStates();
       } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && event.dataTransfer.files.length ===1) ) {
           setSelectedFiles([]); 
           setImagePreviews([]);
           setPreviewUrl(null);
-          setCharacterSheetImageInput(null); // Explicitly clear before processing
+          setCharacterSheetImageInput(null); 
       }
-      processFiles(event.dataTransfer.files);
+      processFiles(event.dataTransfer.files, fileType);
       event.dataTransfer.clearData();
     }
   }, [inputMode, processFiles, isLoading, fashionIsLoadingAnalysis, fashionQaIsLoading]);
@@ -379,24 +470,32 @@ const App: React.FC = () => {
     };
   }, [handlePaste]);
 
-  const clearSelectedFilesForMode = () => { 
-    if (inputMode === 'fashionPrompt') {
+  const clearSelectedFilesForMode = (fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => { 
+    if (fileType === 'garment') {
         setFashionGarmentFiles([]);
         setFashionGarmentPreviewUrls([]);
-        clearSubsequentFashionStates();
-    } else {
+        clearSubsequentFashionStates(); 
+    } else if (fileType === 'backgroundRef') {
+        setFashionBackgroundRefFiles([]);
+        setFashionBackgroundRefPreviewUrls([]);
+        clearSubsequentFashionStates(); 
+    } else if (fileType === 'modelRef') {
+        setFashionModelRefFiles([]);
+        setFashionModelRefPreviewUrls([]);
+        clearSubsequentFashionStates(); 
+    } else { // general
         setSelectedFiles([]);
         setPreviewUrl(null);
         setImagePreviews([]);
         setCharacterSheetImageInput(null);
+        setGeneratedPrompts([]); 
+        setCharacterSheetPrompts([]);
+        setSuggestionsText('');
+        setCharacterSheetSuggestionsText('');
+        setCrazyShotBackgroundIdea('');
     }
-    setGeneratedPrompts([]);
-    setCharacterSheetPrompts([]);
-    setError(null);
+    setError(null); 
     setGlobalProcessingError(null);
-    setSuggestionsText('');
-    setCharacterSheetSuggestionsText('');
-    setCrazyShotBackgroundIdea('');
   };
 
 
@@ -444,7 +543,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setGeneratedPrompts([]);
     setCharacterSheetPrompts([]);
-    setError(null); // Clear previous general errors before new submission
+    setError(null); 
     setGlobalProcessingError(null);
     setSuggestionsText(''); 
     setCharacterSheetSuggestionsText('');
@@ -457,7 +556,6 @@ const App: React.FC = () => {
           const promptText = await generateDetailedPrompt({ imagesToProcess: [{ base64, mimeType }] });
           return { id: itemId, fileName: file.name, prompt: promptText, isCopied: false, originalInput: { type: 'image' as 'image', file } };
         } catch (err: any) {
-          console.error(`Error processing file ${file.name}:`, err);
           return { id: itemId, fileName: file.name, error: err.message || `Failed to generate prompt for ${file.name}.`, isCopied: false, originalInput: { type: 'image' as 'image', file } };
         }
       });
@@ -470,14 +568,10 @@ const App: React.FC = () => {
         const itemId = `fusion-${Date.now()}`;
         const filesToFuse = [...selectedFiles];
         try {
-            const imageInputs = await Promise.all(filesToFuse.map(async (file) => {
-                const { base64, mimeType } = await fileToBase64WithType(file);
-                return { base64, mimeType };
-            }));
+            const imageInputs = await Promise.all(filesToFuse.map(file => fileToBase64WithType(file)));
             const promptText = await generateDetailedPrompt({ imagesToProcess: imageInputs });
             setGeneratedPrompts([{ id: itemId, fileName: 'Fused Prompt', prompt: promptText, isCopied: false, originalInput: { type: 'imageFusion', files: filesToFuse } }]);
         } catch (err: any) {
-            console.error("Error generating fused prompt:", err);
             setGeneratedPrompts([{ id: itemId, fileName: 'Fused Prompt', error: err.message || "Failed to generate fused prompt.", isCopied: false, originalInput: { type: 'imageFusion', files: filesToFuse } }]);
             setGlobalProcessingError(err.message || "Failed to generate fused prompt.");
         }
@@ -491,7 +585,6 @@ const App: React.FC = () => {
                 isCopied: false,
             })));
         } catch (err: any) {
-            console.error("Error generating character sheet prompts:", err);
             setGlobalProcessingError(err.message || "Failed to generate character sheet prompts.");
             setCharacterSheetPrompts([]); 
         }
@@ -502,12 +595,10 @@ const App: React.FC = () => {
         const promptText = await generateDetailedPrompt({ textConcept: currentTextConcept });
         setGeneratedPrompts([{ id: itemId, fileName: 'Text Concept', prompt: promptText, isCopied: false, originalInput: { type: 'text' as 'text', concept: currentTextConcept } }]);
       } catch (err: any) {
-        console.error("Error generating prompt from text concept:", err);
         setGeneratedPrompts([{ id: itemId, fileName: 'Text Concept', error: err.message || "Failed to generate prompt from text concept.", isCopied: false, originalInput: { type: 'text' as 'text', concept: currentTextConcept } }]);
         setGlobalProcessingError(err.message || "Failed to generate prompt from text concept.");
       }
     } else {
-      // Set specific error messages if conditions for submission are not met
       if (inputMode === 'image' && selectedFiles.length === 0) setError("Please select one or more image files.");
       else if (inputMode === 'imageFusion' && (selectedFiles.length < MIN_FILES_FUSION || selectedFiles.length > MAX_FILES_FUSION)) setError(`Please select ${MIN_FILES_FUSION} to ${MAX_FILES_FUSION} images for fusion.`);
       else if (inputMode === 'characterSheet') {
@@ -515,7 +606,6 @@ const App: React.FC = () => {
         else if (!characterSheetImageInput) setError(`Image for character sheet not processed or invalid. Please re-select or try a different image.`);
       }
       else if (inputMode === 'text' && textConcept.trim() === '') setError("Please enter a text concept.");
-      // else: No specific error, button should be disabled by canSubmitGeneral
     }
     setIsLoading(false);
   };
@@ -526,16 +616,26 @@ const App: React.FC = () => {
         return;
     }
     setFashionIsLoadingAnalysis(true);
-    setFashionAnalysisError(null); // Clear previous fashion-specific errors
-    setFashionPromptData(null);    // Clear previous data
+    setFashionAnalysisError(null); 
+    setFashionPromptData(null);    
     clearSubsequentFashionStates(); 
 
     try {
-        const imageInputs = await Promise.all(fashionGarmentFiles.map(file => fileToBase64WithType(file)));
-        const results = await generateFashionAnalysisAndInitialJsonPrompt(imageInputs);
+        const garmentImageInputs = await Promise.all(fashionGarmentFiles.map(file => fileToBase64WithType(file)));
+        const backgroundRefImageInputs = fashionBackgroundRefFiles.length > 0 
+            ? await Promise.all(fashionBackgroundRefFiles.map(file => fileToBase64WithType(file)))
+            : undefined;
+        const modelRefImageInputs = fashionModelRefFiles.length > 0
+            ? await Promise.all(fashionModelRefFiles.map(file => fileToBase64WithType(file)))
+            : undefined;
+
+        const results = await generateFashionAnalysisAndInitialJsonPrompt(
+            garmentImageInputs,
+            backgroundRefImageInputs,
+            modelRefImageInputs
+        );
         setFashionPromptData(results);
     } catch (err: any) {
-        console.error("Error in fashion analysis generation:", err);
         setFashionAnalysisError(err.message || "Failed to generate fashion analysis and prompt.");
         setFashionPromptData(null);
     }
@@ -569,7 +669,6 @@ const App: React.FC = () => {
         })));
 
     } catch (err: any) {
-        console.error("Error in QA and studio/lifestyle prompt generation:", err);
         setFashionQaError(err.message || "Failed to perform QA and generate prompts.");
         setRefinedStudioPrompts(null);
     }
@@ -586,9 +685,7 @@ const App: React.FC = () => {
     setGlobalProcessingError(null);
 
     const refinementPromises = generatedPrompts.map(async (item) => {
-      if (!item.prompt || item.error) {
-        return item; 
-      }
+      if (!item.prompt || item.error) return item; 
       try {
         let refinedPromptText = '';
         if (item.originalInput.type === 'image') {
@@ -598,10 +695,7 @@ const App: React.FC = () => {
             refinementSuggestions: suggestionsText.trim()
           });
         } else if (item.originalInput.type === 'imageFusion') {
-            const imageInputs = await Promise.all(item.originalInput.files.map(async (file) => {
-                const { base64, mimeType } = await fileToBase64WithType(file);
-                return { base64, mimeType };
-            }));
+            const imageInputs = await Promise.all(item.originalInput.files.map(file => fileToBase64WithType(file)));
             refinedPromptText = await generateDetailedPrompt({
                 imagesToProcess: imageInputs,
                 refinementSuggestions: suggestionsText.trim()
@@ -614,7 +708,6 @@ const App: React.FC = () => {
         }
         return { ...item, prompt: refinedPromptText, error: undefined, isCopied: false };
       } catch (err: any) {
-        console.error(`Error refining prompt for ${item.fileName}:`, err);
         return { ...item, error: err.message || `Failed to refine prompt for ${item.fileName}.`, isCopied: false };
       }
     });
@@ -649,19 +742,15 @@ const App: React.FC = () => {
         isCopied: false,
       })));
     } catch (err: any) {
-      console.error("Error refining character sheet prompts:", err);
       setGlobalProcessingError(err.message || "Failed to refine character sheet prompts.");
     }
-
     setIsLoading(false);
   };
 
 
   const handleCopyToClipboard = (textToCopy: string, onCopySuccess: () => void, onCopyError?: (err: any) => void) => {
     navigator.clipboard.writeText(textToCopy)
-        .then(() => {
-            onCopySuccess();
-        })
+        .then(onCopySuccess)
         .catch(err => {
             console.error("Failed to copy:", err);
             if (onCopyError) onCopyError(err);
@@ -674,13 +763,9 @@ const App: React.FC = () => {
         handleCopyToClipboard(promptItem.prompt, 
             () => {
                 setGeneratedPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: true } : p));
-                setTimeout(() => {
-                    setGeneratedPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: false } : p));
-                }, 2000);
+                setTimeout(() => setGeneratedPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: false } : p)), 2000);
             },
-            () => {
-                 setGeneratedPrompts(prev => prev.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p));
-            }
+            () => setGeneratedPrompts(prev => prev.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p))
         );
     }
   };
@@ -691,13 +776,9 @@ const App: React.FC = () => {
         handleCopyToClipboard(promptItem.prompt,
             () => {
                 setCharacterSheetPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: true } : p));
-                setTimeout(() => {
-                    setCharacterSheetPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: false } : p));
-                }, 2000);
+                setTimeout(() => setCharacterSheetPrompts(prev => prev.map(p => p.id === itemId ? { ...p, isCopied: false } : p)), 2000);
             },
-            () => {
-                setCharacterSheetPrompts(prev => prev.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p));
-            }
+            () => setCharacterSheetPrompts(prev => prev.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p))
         );
     }
   };
@@ -709,9 +790,7 @@ const App: React.FC = () => {
                 setFashionInitialJsonPromptCopied(true);
                 setTimeout(() => setFashionInitialJsonPromptCopied(false), 2000);
             },
-            () => {
-                setFashionAnalysisError((prevError) => (prevError ? prevError + " " : "") + "Failed to copy initial JSON prompt.");
-            }
+            () => setFashionAnalysisError((prevError) => (prevError ? prevError + " " : "") + "Failed to copy initial JSON prompt.")
         );
     }
   };
@@ -723,13 +802,9 @@ const App: React.FC = () => {
         handleCopyToClipboard(promptItem.prompt,
             () => {
                 setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, isCopied: true } : p));
-                setTimeout(() => {
-                    setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, isCopied: false } : p));
-                }, 2000);
+                setTimeout(() => setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, isCopied: false } : p)), 2000);
             },
-            () => {
-                 setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p));
-            }
+            () => setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p))
         );
     }
   };
@@ -757,7 +832,23 @@ const App: React.FC = () => {
   const hasSuccessfulPrompts = generatedPrompts.some(p => p.prompt && !p.error);
   const hasCharacterSheetPrompts = characterSheetPrompts.some(p => p.prompt && !p.error);
   
-  const getUploadAreaMessage = () => {
+  const getUploadAreaMessage = (
+    type: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general'
+    ) => {
+    if (type === 'garment') {
+        const remainingSlots = MAX_FILES_FASHION_PROMPT - fashionGarmentFiles.length;
+        if (fashionGarmentFiles.length > 0 && fashionGarmentFiles.length < MAX_FILES_FASHION_PROMPT) {
+             return `Add up to ${remainingSlots} more garment image(s), or click to replace. (Max ${MAX_FILES_FASHION_PROMPT})`;
+        }
+        return `Drag & drop 1 or ${MAX_FILES_FASHION_PROMPT} garment images, or click.`;
+    }
+    if (type === 'backgroundRef') {
+        return `Optional: Drag & drop up to ${MAX_FILES_FASHION_BACKGROUND_REF} background refs, or click.`;
+    }
+    if (type === 'modelRef') {
+        return `Optional: Drag & drop up to ${MAX_FILES_FASHION_MODEL_REF} model refs, or click.`;
+    }
+    // General types
     if (inputMode === 'imageFusion') {
       if (selectedFiles.length > 0 && selectedFiles.length < MIN_FILES_FUSION) {
         return `Need ${MIN_FILES_FUSION - selectedFiles.length} more image(s) for fusion. (Min ${MIN_FILES_FUSION}, Max ${MAX_FILES_FUSION})`;
@@ -767,13 +858,7 @@ const App: React.FC = () => {
     if (inputMode === 'characterSheet') {
       return `Drag & drop ${MAX_FILES_CHARACTER_SHEET} image for character sheet, or click.`;
     }
-    if (inputMode === 'fashionPrompt') {
-        const remainingSlots = MAX_FILES_FASHION_PROMPT - fashionGarmentFiles.length;
-        if (fashionGarmentFiles.length > 0 && fashionGarmentFiles.length < MAX_FILES_FASHION_PROMPT) {
-             return `Add up to ${remainingSlots} more garment image(s), or click to replace. (Max ${MAX_FILES_FASHION_PROMPT})`;
-        }
-        return `Drag & drop 1 or ${MAX_FILES_FASHION_PROMPT} garment images, or click.`;
-    }
+    // Default (image batch)
     const remainingSlots = MAX_FILES_BATCH_UPLOAD - selectedFiles.length;
     if (inputMode === 'image' && selectedFiles.length > 0 && selectedFiles.length < MAX_FILES_BATCH_UPLOAD) {
         return `Add up to ${remainingSlots} more image(s), or click to replace current. (Max ${MAX_FILES_BATCH_UPLOAD})`;
@@ -781,40 +866,44 @@ const App: React.FC = () => {
     return `Drag & drop images, or click. (Max ${MAX_FILES_BATCH_UPLOAD})`;
   };
 
-  const renderUploadArea = () => {
-    const isImageBasedMode = inputMode === 'image' || inputMode === 'imageFusion' || inputMode === 'characterSheet' || inputMode === 'fashionPrompt';
-    if (!isImageBasedMode) return null;
+  const renderFileUploadArea = (
+    areaType: 'garment' | 'backgroundRef' | 'modelRef' | 'general',
+    files: File[],
+    previewUrls: string[],
+    maxFiles: number,
+    inputAccept: string = "image/*",
+    isMultiple: boolean = true,
+    mainIcon?: React.ReactNode,
+    title?: string,
+    fileInputIdSuffix: string = areaType
+  ) => {
+    let CurrentSpecificIconComponent = mainIcon || UploadIcon; // Note: CurrentSpecificIconComponent can be React.ReactNode here
+    if (areaType === 'garment') CurrentSpecificIconComponent = ShirtIcon;
+    else if (areaType === 'backgroundRef') CurrentSpecificIconComponent = PhotoIcon;
+    else if (areaType === 'modelRef') CurrentSpecificIconComponent = UserGroupIcon;
+    else if (inputMode === 'imageFusion' && areaType === 'general') CurrentSpecificIconComponent = SquaresPlusIcon;
+    else if (inputMode === 'characterSheet' && areaType === 'general') CurrentSpecificIconComponent = UserCircleIcon;
+    // At this point, CurrentSpecificIconComponent is either a React.FC or the original mainIcon (React.ReactNode) if no condition matched.
 
-    let SpecificIcon = UploadIcon;
-
-    if (inputMode === 'fashionPrompt') {
-        SpecificIcon = ShirtIcon;
-    } else if (inputMode === 'imageFusion') {
-        SpecificIcon = SquaresPlusIcon;
-    } else if (inputMode === 'characterSheet') {
-        SpecificIcon = UserCircleIcon;
-    }
 
     let previewContent = null;
-    if (inputMode === 'fashionPrompt' && fashionGarmentPreviewUrls.length > 0) {
-        previewContent = (
+    if (previewUrls.length > 0 && (areaType !== 'general' || (inputMode !== 'image' && inputMode !== 'characterSheet'))) {
+         previewContent = (
             <div className="mb-4">
-                <h3 className="font-semibold text-sky-400 mb-2 text-left">
-                    Garment Image{fashionGarmentPreviewUrls.length > 1 ? 's' : ''} ({fashionGarmentPreviewUrls.length}/{MAX_FILES_FASHION_PROMPT}):
-                </h3>
-                <div className={`flex flex-wrap justify-center items-center gap-2 max-h-60 overflow-y-auto pretty-scrollbar p-1`}>
-                {fashionGarmentPreviewUrls.map((src, index) => (
-                    <img 
-                        key={index} 
-                        src={src} 
-                        alt={`Garment preview ${index + 1}`} 
-                        className={`object-contain rounded-md shadow-md border border-zinc-700 ${fashionGarmentPreviewUrls.length === 1 ? 'max-h-52 w-auto mx-auto' : 'h-32 w-32 md:h-40 md:w-40'}`} 
-                    />
-                ))}
+                {title && <h3 className="font-semibold text-sky-400 mb-2 text-left">{title} ({previewUrls.length}/{maxFiles}):</h3>}
+                 <div className={`flex flex-wrap justify-center items-center gap-2 ${previewUrls.length === 1 ? 'max-h-52' : 'max-h-32 md:max-h-40'} overflow-y-auto pretty-scrollbar p-1`}>
+                    {previewUrls.map((src, index) => (
+                        <img 
+                            key={`${areaType}-${index}`} 
+                            src={src} 
+                            alt={`${areaType} preview ${index + 1}`} 
+                            className={`object-contain rounded-md shadow-md border border-zinc-700 ${previewUrls.length === 1 ? 'max-h-48 w-auto mx-auto' : 'h-20 w-20 md:h-28 md:w-28'}`} 
+                        />
+                    ))}
                 </div>
             </div>
         );
-    } else if ((inputMode === 'image' || inputMode === 'characterSheet') && previewUrl && selectedFiles.length === 1) {
+    } else if (areaType === 'general' && (inputMode === 'image' || inputMode === 'characterSheet') && previewUrl && files.length === 1) { // Single image preview for 'image' or 'characterSheet'
         previewContent = (
             <>
                 <img src={previewUrl} alt="Selected preview" className="max-h-60 w-auto mx-auto rounded-md shadow-md mb-4 object-contain" />
@@ -835,79 +924,69 @@ const App: React.FC = () => {
                 )}
             </>
         );
-    } else if (inputMode === 'image' && selectedFiles.length > 0) { // Batch image mode
+    } else if (areaType === 'general' && inputMode === 'image' && files.length > 0) { // Batch image list for 'image' mode
         previewContent = (
             <div className="mb-4 text-left">
-                <h3 className="font-semibold text-sky-400 mb-2">Selected Files ({selectedFiles.length}/{MAX_FILES_BATCH_UPLOAD}):</h3>
+                <h3 className="font-semibold text-sky-400 mb-2">Selected Files ({files.length}/{maxFiles}):</h3>
                 <ul className="list-disc list-inside text-gray-300 max-h-40 overflow-y-auto space-y-1 text-sm pretty-scrollbar pr-2">
-                    {selectedFiles.map(file => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
+                    {files.map(file => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
                 </ul>
             </div>
         );
-    } else if (inputMode === 'imageFusion' && imagePreviews.length > 0) {
-        previewContent = (
-            <div className="mb-4">
-                <h3 className="font-semibold text-sky-400 mb-2 text-left">Selected Images for Fusion ({imagePreviews.length}/{MAX_FILES_FUSION}):</h3>
-                <div className="flex flex-wrap justify-center gap-2 max-h-60 overflow-y-auto pretty-scrollbar p-1">
-                {imagePreviews.map((src, index) => (
-                    <img key={index} src={src} alt={`Fusion preview ${index + 1}`} className="h-20 w-20 object-cover rounded-md shadow-md border border-zinc-700" />
-                ))}
-                </div>
-            </div>
-        );
-    } else { 
+    } else { // Placeholder icon
+        const IconToRender = CurrentSpecificIconComponent; // Keep original name for clarity in this block
         previewContent = (
             <div className="flex flex-col items-center">
-                <SpecificIcon className="w-16 h-16 text-zinc-500 mx-auto mb-4" />
+                 {React.isValidElement(IconToRender) ? (
+                    IconToRender // If IconToRender is already a ReactElement (e.g. from mainIcon={<CustomIcon />} )
+                 ) : typeof IconToRender === 'function' ? (
+                    // If IconToRender is a Functional Component (e.g. ShirtIcon, UploadIcon)
+                    <IconToRender className="w-12 h-12 text-zinc-500 mx-auto mb-3" />
+                 ) : (
+                    // Fallback if IconToRender is some other ReactNode (string, number) or mainIcon was not an element/FC
+                    // This case should ideally not be hit if an icon is expected for placeholder.
+                    <UploadIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" /> 
+                 )}
             </div>
         );
     }
     
     let fileLimitsText = '';
-    let currentSelectedFileCount = 0;
-    if (inputMode === 'imageFusion') {
-      fileLimitsText = `Min ${MIN_FILES_FUSION}, Max ${MAX_FILES_FUSION} images. `;
-      currentSelectedFileCount = selectedFiles.length;
-    } else if (inputMode === 'characterSheet') {
-      fileLimitsText = `Exactly ${MAX_FILES_CHARACTER_SHEET} image. `;
-      currentSelectedFileCount = selectedFiles.length;
-    } else if (inputMode === 'fashionPrompt') {
-      fileLimitsText = `1 or ${MAX_FILES_FASHION_PROMPT} images. `;
-      currentSelectedFileCount = fashionGarmentFiles.length;
-    } else { // image mode
-      fileLimitsText = `Max ${MAX_FILES_BATCH_UPLOAD} files. `;
-      currentSelectedFileCount = selectedFiles.length;
-    }
-
+    if (areaType === 'garment') fileLimitsText = `1 or ${maxFiles} images. `;
+    else if (areaType === 'backgroundRef') fileLimitsText = `Max ${maxFiles} images. `;
+    else if (areaType === 'modelRef') fileLimitsText = `Max ${maxFiles} images. `;
+    else if (inputMode === 'imageFusion') fileLimitsText = `Min ${MIN_FILES_FUSION}, Max ${maxFiles} images. `;
+    else if (inputMode === 'characterSheet') fileLimitsText = `Exactly ${maxFiles} image. `;
+    else fileLimitsText = `Max ${maxFiles} files. `;
 
     return (
         <div 
-          className="border-2 border-dashed border-zinc-600 hover:border-sky-500 rounded-lg p-6 md:p-10 text-center cursor-pointer transition-colors duration-200"
-          onDrop={handleDrop}
+          className="border-2 border-dashed border-zinc-600 hover:border-sky-500 rounded-lg p-4 md:p-6 text-center cursor-pointer transition-colors duration-200"
+          onDrop={(e) => handleDrop(e, areaType)}
           onDragOver={handleDragOver}
-          onClick={() => document.getElementById('fileInput')?.click()}
+          onClick={() => document.getElementById(`fileInput-${fileInputIdSuffix}`)?.click()}
           role="button"
           tabIndex={0}
-          aria-label={`Image upload area: ${getUploadAreaMessage()}`}
+          aria-label={`${title || areaType} image upload area: ${getUploadAreaMessage(areaType)}`}
         >
           <input
             type="file"
-            id="fileInput"
-            accept="image/*"
-            multiple={inputMode === 'image' || inputMode === 'imageFusion' || inputMode === 'fashionPrompt'} 
-            onChange={handleFileChange}
+            id={`fileInput-${fileInputIdSuffix}`}
+            accept={inputAccept}
+            multiple={isMultiple}
+            onChange={(e) => handleFileChange(e, areaType)}
             className="hidden"
             aria-hidden="true"
           />
           {previewContent}
-          <p className="text-gray-400">{getUploadAreaMessage()}</p>
+          <p className="text-gray-400 text-sm">{getUploadAreaMessage(areaType)}</p>
           <p className="text-xs text-zinc-500 mt-1">
             {fileLimitsText}
             {MAX_FILE_SIZE_MB}MB per image. PNG, JPG, GIF, WEBP.
           </p>
-          {currentSelectedFileCount > 0 && (
-            <Button variant="secondary" onClick={(e) => { e.stopPropagation(); clearSelectedFilesForMode(); }} className="mt-4 text-sm !py-1.5 !px-3">
-                <XCircleIcon className="w-4 h-4" /> Clear Selection
+          {files.length > 0 && (
+            <Button variant="secondary" onClick={(e) => { e.stopPropagation(); clearSelectedFilesForMode(areaType); }} className="mt-3 text-xs !py-1 !px-2">
+                <XCircleIcon className="w-3.5 h-3.5" /> Clear Selection
             </Button>
           )}
         </div>
@@ -976,7 +1055,7 @@ const App: React.FC = () => {
         {fashionQaError && inputMode === 'fashionPrompt' && <Alert type="error" message={fashionQaError} onClose={() => setFashionQaError(null)} />}
 
 
-        <div className="bg-zinc-800 p-6 rounded-xl shadow-xl">
+        <div className="bg-zinc-800 p-6 rounded-xl shadow-xl space-y-6">
           {inputMode === 'text' ? (
             <textarea
               value={textConcept}
@@ -985,15 +1064,26 @@ const App: React.FC = () => {
               className="w-full h-40 p-4 bg-zinc-700 border border-zinc-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200 resize-none placeholder-zinc-500 pretty-scrollbar"
               aria-label="Text concept input"
             />
-          ) : (
-            renderUploadArea()
+          ) : inputMode === 'fashionPrompt' ? (
+            <>
+              {renderFileUploadArea('garment', fashionGarmentFiles, fashionGarmentPreviewUrls, MAX_FILES_FASHION_PROMPT, "image/*", true, <ShirtIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Garment Image(s)")}
+              {renderFileUploadArea('backgroundRef', fashionBackgroundRefFiles, fashionBackgroundRefPreviewUrls, MAX_FILES_FASHION_BACKGROUND_REF, "image/*", true, <PhotoIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Background Reference Image(s) (Optional)")}
+              {renderFileUploadArea('modelRef', fashionModelRefFiles, fashionModelRefPreviewUrls, MAX_FILES_FASHION_MODEL_REF, "image/*", true, <UserGroupIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Model Reference Image(s) (Optional)")}
+            </>
+          ) : ( // General image upload modes
+            renderFileUploadArea('general', selectedFiles, imagePreviews, 
+                inputMode === 'imageFusion' ? MAX_FILES_FUSION : 
+                inputMode === 'characterSheet' ? MAX_FILES_CHARACTER_SHEET : MAX_FILES_BATCH_UPLOAD,
+                "image/*",
+                inputMode === 'image' || inputMode === 'imageFusion'
+            )
           )}
 
           {inputMode !== 'fashionPrompt' && (
             <Button 
                 onClick={handleSubmit} 
                 disabled={!canSubmitGeneral()}
-                className="w-full mt-6 text-lg"
+                className="w-full text-lg"
                 aria-label={
                     inputMode === 'image' ? "Generate detailed prompts from selected images" :
                     inputMode === 'imageFusion' ? "Generate single fused prompt from selected images" :
@@ -1015,7 +1105,7 @@ const App: React.FC = () => {
              <Button 
                 onClick={handleGenerateFashionAnalysis}
                 disabled={!canSubmitFashion()}
-                className="w-full mt-6 text-lg"
+                className="w-full text-lg"
                 aria-label="Analyze garment and generate initial fashion prompt"
             >
                 {fashionIsLoadingAnalysis ? <Spinner /> : <SparklesIcon className="w-5 h-5"/>}
@@ -1057,7 +1147,6 @@ const App: React.FC = () => {
                     </Button>
                 </div>
                 
-                {/* QA and Refined Studio Prompts Section */}
                 <div className="border-t-2 border-zinc-700 pt-6 mt-8 space-y-6">
                     <h2 className="text-2xl font-semibold text-sky-400 mb-1">Step 2: QA & Prompt Generation</h2>
                     <p className="text-gray-400 text-sm mb-4">
