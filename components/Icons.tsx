@@ -78,3 +78,21 @@ export const UserGroupIcon: React.FC<IconProps> = ({ className = "w-6 h-6" }) =>
     <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-9.191-2.13m9.191 2.13a2.25 2.25 0 00-3.638-2.515M12 12.75a5.25 5.25 0 100-10.5 5.25 5.25 0 000 10.5zM13.5 8.25a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0zM5.603 16.346A9.004 9.004 0 0112 15c1.906 0 3.676.505 5.105 1.346M19.5 12.75a5.25 5.25 0 00-3.38-4.904 2.25 2.25 0 01-.858-2.015A5.25 5.25 0 0012.75 3 5.25 5.25 0 007.5 5.832c0 .873.303 1.68.826 2.316a2.25 2.25 0 01-.858 2.015A5.25 5.25 0 004.5 12.75" />
   </svg>
 );
+
+export const RocketLaunchIcon: React.FC<IconProps> = ({ className = "w-6 h-6" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 2.25c-5.508 0-10.499 2.618-13.18 6.82A6.002 6.002 0 0115.59 14.37zM14.5 11.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+  </svg>
+);
+
+export const ArrowDownTrayIcon: React.FC<IconProps> = ({ className = "w-6 h-6" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-16.5-1.5l4.5 4.5 4.5-4.5" />
+  </svg>
+);
+
+export const ArrowRightCircleIcon: React.FC<IconProps> = ({ className = "w-6 h-6" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="m12.75 15 3-3m0 0-3-3m3 3h-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+  </svg>
+);

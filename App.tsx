@@ -1,11 +1,12 @@
 
 import React, { useState, useCallback, ChangeEvent, useEffect, DragEvent } from 'react';
 import { generateDetailedPrompt, generateCharacterSheetPrompts, refineCharacterSheetPrompts, generateFashionAnalysisAndInitialJsonPrompt, performQaAndGenerateStudioPrompts } from './services/geminiService';
+import { generateImageViaReplicate } from './services/replicateService'; // New service
 import { fileToBase64WithType, FileConversionResult } from './utils/fileUtils';
 import { Button } from './components/Button';
 import { Spinner } from './components/Spinner';
 import { Alert } from './components/Alert';
-import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon, SquaresPlusIcon, UserCircleIcon, ShirtIcon, PhotoIcon, UserGroupIcon } from './components/Icons';
+import { UploadIcon, TextIcon, ClipboardIcon, CheckIcon, SparklesIcon, XCircleIcon, WandSparklesIcon, SquaresPlusIcon, UserCircleIcon, ShirtIcon, PhotoIcon, UserGroupIcon, RocketLaunchIcon, ArrowDownTrayIcon, ArrowRightCircleIcon } from './components/Icons'; // Added RocketLaunchIcon
 
 
 type InputMode = 'image' | 'text' | 'imageFusion' | 'characterSheet' | 'fashionPrompt';
@@ -30,18 +31,26 @@ interface CharacterSheetPromptItem {
   error?: string;
 }
 
-export interface FashionPromptData { // Exported for use in geminiService
+export interface FashionPromptData { 
   garmentAnalysis: string;
   qaChecklist: string;
   initialJsonPrompt: string;
 }
 
-interface RefinedStudioPromptItem { // Now also used for Lifestyle prompts
+interface RefinedStudioPromptItem { 
   id: string;
   title: string;
   prompt: string;
   isCopied: boolean;
   error?: string;
+  generatedImageUrl?: string;
+  isGeneratingImage?: boolean;
+  imageError?: string;
+}
+
+interface ReplicateInputImage {
+  file: File;
+  dataUrl: string; // For preview and potential payload
 }
 
 
@@ -76,12 +85,27 @@ const App: React.FC = () => {
   const [fashionAnalysisError, setFashionAnalysisError] = useState<string | null>(null);
   const [fashionPromptData, setFashionPromptData] = useState<FashionPromptData | null>(null);
   const [fashionInitialJsonPromptCopied, setFashionInitialJsonPromptCopied] = useState<boolean>(false);
+  const [initialPromptGeneratedImageUrl, setInitialPromptGeneratedImageUrl] = useState<string | null>(null);
+  const [isGeneratingInitialImage, setIsGeneratingInitialImage] = useState<boolean>(false);
+  const [initialImageError, setInitialImageError] = useState<string | null>(null);
   
   const [generatedFashionImageFile, setGeneratedFashionImageFile] = useState<File | null>(null);
   const [generatedFashionImagePreviewUrl, setGeneratedFashionImagePreviewUrl] = useState<string | null>(null);
   const [fashionQaIsLoading, setFashionQaIsLoading] = useState<boolean>(false);
   const [fashionQaError, setFashionQaError] = useState<string | null>(null);
   const [refinedStudioPrompts, setRefinedStudioPrompts] = useState<RefinedStudioPromptItem[] | null>(null);
+
+  // State for Replicate Image Generation
+  const [showReplicatePanel, setShowReplicatePanel] = useState<boolean>(false);
+  const [replicatePromptText, setReplicatePromptText] = useState<string>('');
+  const [replicatePromptTitle, setReplicatePromptTitle] = useState<string>('');
+  const [replicateAspectRatio, setReplicateAspectRatio] = useState<string>('1:1');
+  const [replicateInputImage1, setReplicateInputImage1] = useState<ReplicateInputImage | null>(null);
+  const [replicateInputImage2, setReplicateInputImage2] = useState<ReplicateInputImage | null>(null);
+  const [isReplicateLoading, setIsReplicateLoading] = useState<boolean>(false);
+  const [replicateResultImageUrl, setReplicateResultImageUrl] = useState<string | null>(null);
+  const [replicateError, setReplicateError] = useState<string | null>(null);
+  const [availableGarmentImagesForReplicate, setAvailableGarmentImagesForReplicate] = useState<ReplicateInputImage[]>([]);
 
 
   const MAX_FILE_SIZE_MB = 4;
@@ -91,7 +115,7 @@ const App: React.FC = () => {
   const MIN_FILES_FUSION = 2;
   const MAX_FILES_FUSION = 5;
   const MAX_FILES_CHARACTER_SHEET = 1;
-  const MAX_FILES_FASHION_PROMPT = 2; // Can be 1 or 2
+  const MAX_FILES_FASHION_PROMPT = 2; 
   const MAX_FILES_FASHION_BACKGROUND_REF = 3;
   const MAX_FILES_FASHION_MODEL_REF = 3;
 
@@ -110,7 +134,6 @@ const App: React.FC = () => {
     setCharacterSheetSuggestionsText('');
     setCharacterSheetImageInput(null);
     
-    // Reset fashion states
     setFashionGarmentFiles([]);
     setFashionGarmentPreviewUrls([]);
     setFashionBackgroundRefFiles([]);
@@ -121,11 +144,26 @@ const App: React.FC = () => {
     setFashionAnalysisError(null);
     setFashionPromptData(null);
     setFashionInitialJsonPromptCopied(false);
+    setInitialPromptGeneratedImageUrl(null);
+    setIsGeneratingInitialImage(false);
+    setInitialImageError(null);
     setGeneratedFashionImageFile(null);
     setGeneratedFashionImagePreviewUrl(null);
     setFashionQaIsLoading(false);
     setFashionQaError(null);
     setRefinedStudioPrompts(null);
+
+    // Reset Replicate states
+    setShowReplicatePanel(false);
+    setReplicatePromptText('');
+    setReplicatePromptTitle('');
+    setReplicateAspectRatio('1:1');
+    setReplicateInputImage1(null);
+    setReplicateInputImage2(null);
+    setIsReplicateLoading(false);
+    setReplicateResultImageUrl(null);
+    setReplicateError(null);
+    setAvailableGarmentImagesForReplicate([]);
   }
 
   const setInputMode = (mode: InputMode) => {
@@ -161,10 +199,10 @@ const App: React.FC = () => {
             currentFilesArray = fashionModelRefFiles;
             setFilesFunction = setFashionModelRefFiles;
             break;
-        default: // 'general'
+        default: 
             if (inputMode === 'imageFusion') currentMaxFiles = MAX_FILES_FUSION;
             else if (inputMode === 'characterSheet') currentMaxFiles = MAX_FILES_CHARACTER_SHEET;
-            else currentMaxFiles = MAX_FILES_BATCH_UPLOAD; // image mode
+            else currentMaxFiles = MAX_FILES_BATCH_UPLOAD; 
             currentFilesArray = selectedFiles;
             setFilesFunction = setSelectedFiles;
             break;
@@ -175,8 +213,6 @@ const App: React.FC = () => {
     let currentBatchError: string | null = null;
 
     Array.from(filesToProcess).forEach(file => {
-      // For fashion-specific types or single-add modes, we check newValidFiles.length.
-      // For general batch (image mode with multiple), we check combined length.
       const countForRejectionCheck = (fileType !== 'general' || inputMode === 'characterSheet' || inputMode === 'imageFusion')
                                         ? newValidFiles.length
                                         : currentFilesArray.length + newValidFiles.length;
@@ -200,7 +236,6 @@ const App: React.FC = () => {
       newValidFiles.push(file);
     });
     
-    // For fashion types, replace current files. For general batch, append or replace based on context.
     if (fileType !== 'general') {
         setFilesFunction(newValidFiles.slice(0, currentMaxFiles));
     } else {
@@ -215,7 +250,6 @@ const App: React.FC = () => {
     }
     setError(currentBatchError); 
 
-    // Clear states dependent on general file processing if it's general, or specific fashion states
     if (fileType === 'general') {
         setTextConcept(''); 
         setGeneratedPrompts([]);
@@ -225,8 +259,8 @@ const App: React.FC = () => {
         setCharacterSheetSuggestionsText('');
 
         if (inputMode === 'characterSheet') {
-            const filesForCharSheet = selectedFiles; // Use the just-updated selectedFiles state
-            if (filesForCharSheet.length === 1 && newValidFiles.length > 0) { // Check if new valid file was added for CS
+            const filesForCharSheet = selectedFiles; 
+            if (filesForCharSheet.length === 1 && newValidFiles.length > 0) { 
                 try {
                     const imageInput = await fileToBase64WithType(filesForCharSheet[0]);
                     setCharacterSheetImageInput(imageInput);
@@ -248,15 +282,29 @@ const App: React.FC = () => {
         } else {
             setCharacterSheetImageInput(null);
         }
-    } else if (fileType === 'garment') { // Fashion garment file change, clear subsequent fashion states
+    } else if (fileType === 'garment') { 
         clearSubsequentFashionStates();
-    } // For background/model refs, no need to clear subsequent states beyond their own previews.
+        // Prepare garment images for Replicate selection
+        const replicateReadyImages = await Promise.all(
+            newValidFiles.slice(0, MAX_FILES_FASHION_PROMPT).map(async (file) => {
+                const reader = new FileReader();
+                return new Promise<ReplicateInputImage>((resolve, reject) => {
+                    reader.onloadend = () => resolve({ file, dataUrl: reader.result as string });
+                    reader.onerror = () => reject(new Error(`Failed to read ${file.name} for Replicate selection.`));
+                    reader.readAsDataURL(file);
+                });
+            })
+        );
+        setAvailableGarmentImagesForReplicate(replicateReadyImages);
+        setReplicateInputImage1(null); // Clear selections if garment files change
+        setReplicateInputImage2(null);
+
+    } 
 
   }, [selectedFiles, fashionGarmentFiles, fashionBackgroundRefFiles, fashionModelRefFiles, inputMode, MAX_FILES_CHARACTER_SHEET, MAX_FILES_FASHION_PROMPT, MAX_FILES_FASHION_BACKGROUND_REF, MAX_FILES_FASHION_MODEL_REF, MAX_FILES_FUSION, MAX_FILES_BATCH_UPLOAD, MAX_FILE_SIZE_BYTES]);
 
 
   useEffect(() => {
-    // Standard Image/Character Sheet Previews
     if ((inputMode === 'image' || inputMode === 'characterSheet') && selectedFiles.length === 1) {
       const file = selectedFiles[0];
       const reader = new FileReader();
@@ -269,7 +317,6 @@ const App: React.FC = () => {
       setPreviewUrl(null);
     }
 
-    // Image Fusion Previews
     if (inputMode === 'imageFusion' && selectedFiles.length > 0) {
       const filePromises = selectedFiles.map(file => 
         new Promise<string>((resolve, reject) => {
@@ -289,7 +336,6 @@ const App: React.FC = () => {
       setImagePreviews([]);
     }
 
-    // Fashion Garment Previews
     if (inputMode === 'fashionPrompt' && fashionGarmentFiles.length > 0) {
         const filePromises = fashionGarmentFiles.map(file => 
             new Promise<string>((resolve, reject) => {
@@ -309,7 +355,6 @@ const App: React.FC = () => {
        setFashionGarmentPreviewUrls([]);
     }
     
-    // Fashion Background Reference Previews
     if (inputMode === 'fashionPrompt' && fashionBackgroundRefFiles.length > 0) {
         const filePromises = fashionBackgroundRefFiles.map(file => 
             new Promise<string>((resolve, reject) => {
@@ -329,7 +374,6 @@ const App: React.FC = () => {
        setFashionBackgroundRefPreviewUrls([]);
     }
 
-    // Fashion Model Reference Previews
     if (inputMode === 'fashionPrompt' && fashionModelRefFiles.length > 0) {
         const filePromises = fashionModelRefFiles.map(file => 
             new Promise<string>((resolve, reject) => {
@@ -352,7 +396,7 @@ const App: React.FC = () => {
   }, [selectedFiles, inputMode, fashionGarmentFiles, fashionBackgroundRefFiles, fashionModelRefFiles]);
 
 
-  const clearSubsequentFashionStates = () => {
+  const clearSubsequentFashionStates = (clearFullReplicate: boolean = true) => {
     setFashionPromptData(null);
     setFashionAnalysisError(null);
     setGeneratedFashionImageFile(null);
@@ -360,32 +404,42 @@ const App: React.FC = () => {
     setRefinedStudioPrompts(null);
     setFashionQaError(null);
     setFashionInitialJsonPromptCopied(false);
+
+    if (clearFullReplicate) {
+        setShowReplicatePanel(false);
+        setReplicatePromptText('');
+        setReplicatePromptTitle('');
+        setReplicateInputImage1(null);
+        setReplicateInputImage2(null);
+        setReplicateResultImageUrl(null);
+        setReplicateError(null);
+        setIsReplicateLoading(false);
+    }
   };
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
     if (event.target.files) {
       const target = event.target as HTMLInputElement; 
       if (fileType === 'garment') {
           setFashionGarmentFiles([]); 
           setFashionGarmentPreviewUrls([]);
-          clearSubsequentFashionStates(); // Garment change affects everything after
+          clearSubsequentFashionStates(); 
+          setAvailableGarmentImagesForReplicate([]); 
       } else if (fileType === 'backgroundRef') {
           setFashionBackgroundRefFiles([]);
           setFashionBackgroundRefPreviewUrls([]);
-           // BG ref change also invalidates prior analysis
-          clearSubsequentFashionStates();
+          clearSubsequentFashionStates(false); 
       } else if (fileType === 'modelRef') {
           setFashionModelRefFiles([]);
           setFashionModelRefPreviewUrls([]);
-           // Model ref change also invalidates prior analysis
-          clearSubsequentFashionStates();
+          clearSubsequentFashionStates(false);
       } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && !target.multiple) ) {
           setSelectedFiles([]); 
           setImagePreviews([]);
           setPreviewUrl(null);
           setCharacterSheetImageInput(null); 
       }
-      processFiles(event.target.files, fileType);
+      await processFiles(event.target.files, fileType);
     }
     if (event.target) {
         (event.target as HTMLInputElement).value = ''; 
@@ -415,21 +469,22 @@ const App: React.FC = () => {
         if (inputMode === 'fashionPrompt') {
             setFashionGarmentFiles([]); 
             setFashionGarmentPreviewUrls([]);
-            clearSubsequentFashionStates(); 
-            processFiles(pastedFiles, 'garment');
+            clearSubsequentFashionStates();
+            setAvailableGarmentImagesForReplicate([]);
+            await processFiles(pastedFiles, 'garment');
         } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && pastedFiles.length === 1) ) {
             setSelectedFiles([]); 
             setImagePreviews([]);
             setPreviewUrl(null);
             setCharacterSheetImageInput(null); 
-            processFiles(pastedFiles, 'general');
+            await processFiles(pastedFiles, 'general');
         } else if (inputMode === 'image') { 
-            processFiles(pastedFiles, 'general');
+            await processFiles(pastedFiles, 'general');
         }
     }
   }, [inputMode, isLoading, fashionIsLoadingAnalysis, fashionQaIsLoading, processFiles]);
 
-  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
+  const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>, fileType: 'garment' | 'backgroundRef' | 'modelRef' | 'general' = 'general') => {
     event.preventDefault();
     event.stopPropagation();
     if ((inputMode !== 'image' && inputMode !== 'imageFusion' && inputMode !== 'characterSheet' && inputMode !== 'fashionPrompt') || isLoading || fashionIsLoadingAnalysis || fashionQaIsLoading) return;
@@ -439,21 +494,22 @@ const App: React.FC = () => {
           setFashionGarmentFiles([]); 
           setFashionGarmentPreviewUrls([]);
           clearSubsequentFashionStates();
+          setAvailableGarmentImagesForReplicate([]);
       } else if (fileType === 'backgroundRef') {
           setFashionBackgroundRefFiles([]);
           setFashionBackgroundRefPreviewUrls([]);
-          clearSubsequentFashionStates();
+          clearSubsequentFashionStates(false);
       } else if (fileType === 'modelRef') {
           setFashionModelRefFiles([]);
           setFashionModelRefPreviewUrls([]);
-          clearSubsequentFashionStates();
+          clearSubsequentFashionStates(false);
       } else if (inputMode === 'characterSheet' || inputMode === 'imageFusion' || (inputMode === 'image' && event.dataTransfer.files.length ===1) ) {
           setSelectedFiles([]); 
           setImagePreviews([]);
           setPreviewUrl(null);
           setCharacterSheetImageInput(null); 
       }
-      processFiles(event.dataTransfer.files, fileType);
+      await processFiles(event.dataTransfer.files, fileType);
       event.dataTransfer.clearData();
     }
   }, [inputMode, processFiles, isLoading, fashionIsLoadingAnalysis, fashionQaIsLoading]);
@@ -475,15 +531,18 @@ const App: React.FC = () => {
         setFashionGarmentFiles([]);
         setFashionGarmentPreviewUrls([]);
         clearSubsequentFashionStates(); 
+        setAvailableGarmentImagesForReplicate([]);
+        setReplicateInputImage1(null);
+        setReplicateInputImage2(null);
     } else if (fileType === 'backgroundRef') {
         setFashionBackgroundRefFiles([]);
         setFashionBackgroundRefPreviewUrls([]);
-        clearSubsequentFashionStates(); 
+        clearSubsequentFashionStates(false); 
     } else if (fileType === 'modelRef') {
         setFashionModelRefFiles([]);
         setFashionModelRefPreviewUrls([]);
-        clearSubsequentFashionStates(); 
-    } else { // general
+        clearSubsequentFashionStates(false); 
+    } else { 
         setSelectedFiles([]);
         setPreviewUrl(null);
         setImagePreviews([]);
@@ -650,6 +709,7 @@ const App: React.FC = () => {
     setFashionQaIsLoading(true);
     setFashionQaError(null);
     setRefinedStudioPrompts(null);
+    setShowReplicatePanel(false); // Hide replicate panel if it was open for a previous QA'd prompt
 
     try {
         const originalGarmentImageInputs = await Promise.all(fashionGarmentFiles.map(file => fileToBase64WithType(file)));
@@ -757,6 +817,64 @@ const App: React.FC = () => {
         });
   };
 
+  const handleCopyImageToClipboard = async (imageUrl: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      // Could add UI feedback here
+    } catch (err) {
+      console.error('Failed to copy image:', err);
+      // Fallback: copy the URL instead
+      navigator.clipboard.writeText(imageUrl);
+    }
+  };
+
+  const handleDownloadImage = async (imageUrl: string, filename: string = 'generated-image') => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${filename}.png`;
+      document.body.appendChild(link);
+      link.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Failed to download image:', err);
+    }
+  };
+
+  const handleSendToQA = async (imageUrl: string) => {
+    try {
+      // Convert image URL to File object
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const file = new File([blob], 'generated-initial-image.png', { type: 'image/png' });
+      
+      // Set the generated fashion image
+      setGeneratedFashionImageFile(file);
+      
+      // Create preview URL
+      const previewUrl = URL.createObjectURL(blob);
+      setGeneratedFashionImagePreviewUrl(previewUrl);
+      
+      // Scroll to QA section
+      setTimeout(() => {
+        const qaSection = document.getElementById('qa-section');
+        if (qaSection) {
+          qaSection.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+    } catch (err) {
+      console.error('Failed to send image to QA:', err);
+    }
+  };
+
   const copyGeneratedPrompt = (itemId: string) => {
     const promptItem = generatedPrompts.find(p => p.id === itemId);
     if (promptItem && promptItem.prompt) {
@@ -795,6 +913,137 @@ const App: React.FC = () => {
     }
   };
 
+  const handleGenerateInitialPromptImage = async () => {
+    if (!fashionPromptData?.initialJsonPrompt || !fashionGarmentFiles.length) return;
+
+    setIsGeneratingInitialImage(true);
+    setInitialImageError(null);
+    
+    try {
+      // Prepare garment images if not already available
+      let garmentImages = availableGarmentImagesForReplicate;
+      if (garmentImages.length === 0) {
+        garmentImages = await Promise.all(
+          fashionGarmentFiles.map(async (file) => {
+            const reader = new FileReader();
+            return new Promise<ReplicateInputImage>((resolve, reject) => {
+              reader.onloadend = () => resolve({ file, dataUrl: reader.result as string });
+              reader.onerror = () => reject(new Error(`Failed to read ${file.name} for generation.`));
+              reader.readAsDataURL(file);
+            });
+          })
+        );
+      }
+
+      const replicateInputs: any = {
+        prompt: fashionPromptData.initialJsonPrompt,
+        aspect_ratio: '1:1',
+      };
+
+      // Use first two garment images if available
+      if (garmentImages.length >= 2) {
+        replicateInputs.input_image_1 = garmentImages[0].dataUrl;
+        replicateInputs.input_image_2 = garmentImages[1].dataUrl;
+      } else if (garmentImages.length === 1) {
+        // Use the same image twice if only one is available
+        replicateInputs.input_image_1 = garmentImages[0].dataUrl;
+        replicateInputs.input_image_2 = garmentImages[0].dataUrl;
+      } else {
+        throw new Error("No garment images available for generation.");
+      }
+
+      const resultUrl = await generateImageViaReplicate(replicateInputs);
+      setInitialPromptGeneratedImageUrl(resultUrl);
+    } catch (err: any) {
+      setInitialImageError(err.message || 'Failed to generate image for initial prompt.');
+    } finally {
+      setIsGeneratingInitialImage(false);
+    }
+  };
+
+  const handleGenerateQAPromptImage = async (itemId: string) => {
+    if (!refinedStudioPrompts) return;
+    
+    const promptItem = refinedStudioPrompts.find(p => p.id === itemId);
+    if (!promptItem?.prompt) return;
+
+    setRefinedStudioPrompts(prev => 
+      prev!.map(p => p.id === itemId ? { ...p, isGeneratingImage: true, imageError: undefined } : p)
+    );
+
+    try {
+      // Prepare garment images if not already available
+      let garmentImages = availableGarmentImagesForReplicate;
+      if (garmentImages.length === 0) {
+        garmentImages = await Promise.all(
+          fashionGarmentFiles.map(async (file) => {
+            const reader = new FileReader();
+            return new Promise<ReplicateInputImage>((resolve, reject) => {
+              reader.onloadend = () => resolve({ file, dataUrl: reader.result as string });
+              reader.onerror = () => reject(new Error(`Failed to read ${file.name} for generation.`));
+              reader.readAsDataURL(file);
+            });
+          })
+        );
+      }
+
+      const replicateInputs: any = {
+        prompt: promptItem.prompt,
+        aspect_ratio: '1:1',
+      };
+
+      let inputStrategy = '';
+
+      // Strategy: Use garment as first image, and studio front-facing image as second if available
+      if (garmentImages.length >= 1) {
+        replicateInputs.input_image_1 = garmentImages[0].dataUrl;
+        
+        // Look for a studio front-facing generated image to use as second input
+        const studioFrontPrompt = refinedStudioPrompts.find(p => 
+          p.generatedImageUrl && 
+          (p.title.toLowerCase().includes('studio') && p.title.toLowerCase().includes('front'))
+        );
+        
+        if (studioFrontPrompt?.generatedImageUrl) {
+          // Use the studio front-facing image as second input
+          replicateInputs.input_image_2 = studioFrontPrompt.generatedImageUrl;
+          inputStrategy = `Using: Garment + Studio Front-Facing Image (${studioFrontPrompt.title})`;
+        } else if (garmentImages.length >= 2) {
+          // Fallback to second garment image
+          replicateInputs.input_image_2 = garmentImages[1].dataUrl;
+          inputStrategy = 'Using: First Garment + Second Garment Image';
+        } else {
+          // Use the same garment image twice
+          replicateInputs.input_image_2 = garmentImages[0].dataUrl;
+          inputStrategy = 'Using: Garment Image (duplicated for both inputs)';
+        }
+      } else {
+        throw new Error("No garment images available for generation.");
+      }
+
+      console.log(`Generation strategy for ${promptItem.title}: ${inputStrategy}`);
+
+      const resultUrl = await generateImageViaReplicate(replicateInputs);
+      
+      setRefinedStudioPrompts(prev => 
+        prev!.map(p => p.id === itemId ? { 
+          ...p, 
+          isGeneratingImage: false, 
+          generatedImageUrl: resultUrl,
+          imageError: undefined 
+        } : p)
+      );
+    } catch (err: any) {
+      setRefinedStudioPrompts(prev => 
+        prev!.map(p => p.id === itemId ? { 
+          ...p, 
+          isGeneratingImage: false, 
+          imageError: err.message || 'Failed to generate image.'
+        } : p)
+      );
+    }
+  };
+
   const copyRefinedStudioPrompt = (itemId: string) => {
     if (!refinedStudioPrompts) return;
     const promptItem = refinedStudioPrompts.find(p => p.id === itemId);
@@ -806,6 +1055,101 @@ const App: React.FC = () => {
             },
             () => setRefinedStudioPrompts(prev => prev!.map(p => p.id === itemId ? { ...p, error: (p.error || "") + " Copy failed." } : p))
         );
+    }
+  };
+
+  const handleOpenReplicatePanel = (promptText: string, promptTitle: string) => {
+    setReplicatePromptText(promptText);
+    setReplicatePromptTitle(promptTitle);
+    setShowReplicatePanel(true);
+    setReplicateResultImageUrl(null);
+    setReplicateError(null);
+    // setReplicateInputImage1(null); // Keep previous selections or clear? Let's clear for fresh start.
+    // setReplicateInputImage2(null);
+    // setReplicateAspectRatio('1:1'); // Keep previous or reset? Reset.
+    // Update available garment images from current fashionGarmentFiles
+    Promise.all(
+        fashionGarmentFiles.map(async (file) => {
+            const reader = new FileReader();
+            return new Promise<ReplicateInputImage>((resolve, reject) => {
+                reader.onloadend = () => resolve({ file, dataUrl: reader.result as string });
+                reader.onerror = () => reject(new Error(`Failed to read ${file.name} for Replicate selection.`));
+                reader.readAsDataURL(file);
+            });
+        })
+    ).then(images => {
+        setAvailableGarmentImagesForReplicate(images);
+        // Auto-select first two images if available and none selected
+        if (images.length >= 2 && !replicateInputImage1 && !replicateInputImage2) {
+            setReplicateInputImage1(images[0]);
+            setReplicateInputImage2(images[1]);
+        } else if (images.length >= 1 && !replicateInputImage1) {
+            setReplicateInputImage1(images[0]);
+        }
+    }).catch(err => {
+        console.error("Error preparing garment images for Replicate:", err);
+        setReplicateError("Error preparing garment images for selection.");
+    });
+  };
+
+  const handleToggleReplicateImageSelection = (image: ReplicateInputImage, slot: 1 | 2) => {
+    const isSameFile = (img1: ReplicateInputImage | null, img2: ReplicateInputImage) => {
+        return img1?.file.name === img2.file.name && img1?.file.lastModified === img2.file.lastModified;
+    };
+
+    if (slot === 1) {
+        // If clicking on currently selected image in slot 1, deselect it
+        if (isSameFile(replicateInputImage1, image)) {
+            setReplicateInputImage1(null);
+        } else {
+            // Select it for slot 1
+            setReplicateInputImage1(image);
+        }
+    } else { // slot === 2
+        // If clicking on currently selected image in slot 2, deselect it
+        if (isSameFile(replicateInputImage2, image)) {
+            setReplicateInputImage2(null);
+        } else {
+            // Select it for slot 2
+            setReplicateInputImage2(image);
+        }
+    }
+  };
+
+  const handleGenerateWithReplicate = async () => {
+    setIsReplicateLoading(true);
+    setReplicateResultImageUrl(null);
+    setReplicateError(null);
+
+    const replicateInputs: any = {
+      prompt: replicatePromptText,
+      aspect_ratio: replicateAspectRatio,
+    };
+
+    if (replicateInputImage1) {
+      // In a real scenario, you'd upload this file and get a public URL, or send base64 if supported by API.
+      // For this mock, we'll use the dataUrl we prepared for previews.
+      replicateInputs.input_image_1 = replicateInputImage1.dataUrl;
+    }
+    if (replicateInputImage2) {
+      replicateInputs.input_image_2 = replicateInputImage2.dataUrl;
+    }
+    
+    // The Replicate model flux-kontext-apps/multi-image-kontext-max seems to prefer input_image_1 if images are used.
+    // If only one image is selected for Replicate, ensure it goes to input_image_1.
+    if (!replicateInputs.input_image_1 && replicateInputs.input_image_2) {
+        replicateInputs.input_image_1 = replicateInputs.input_image_2;
+        delete replicateInputs.input_image_2;
+    }
+
+
+    try {
+      const resultUrl = await generateImageViaReplicate(replicateInputs);
+      setReplicateResultImageUrl(resultUrl);
+    } catch (err: any) {
+      setReplicateError(err.message || 'Failed to generate image with Replicate.');
+    } finally {
+      setIsReplicateLoading(false);
     }
   };
 
@@ -827,6 +1171,12 @@ const App: React.FC = () => {
   const canSubmitFashionQa = (): boolean => {
     if (fashionQaIsLoading) return false;
     return !!fashionPromptData && !!generatedFashionImageFile && fashionGarmentFiles.length > 0;
+  };
+
+  const canSubmitReplicate = (): boolean => {
+    if (isReplicateLoading || !replicatePromptText) return false;
+    // The flux-kontext-apps/multi-image-kontext-max model requires both input images
+    return !!(replicateInputImage1 && replicateInputImage2);
   };
 
   const hasSuccessfulPrompts = generatedPrompts.some(p => p.prompt && !p.error);
@@ -877,13 +1227,12 @@ const App: React.FC = () => {
     title?: string,
     fileInputIdSuffix: string = areaType
   ) => {
-    let CurrentSpecificIconComponent = mainIcon || UploadIcon; // Note: CurrentSpecificIconComponent can be React.ReactNode here
+    let CurrentSpecificIconComponent = mainIcon || UploadIcon; 
     if (areaType === 'garment') CurrentSpecificIconComponent = ShirtIcon;
     else if (areaType === 'backgroundRef') CurrentSpecificIconComponent = PhotoIcon;
     else if (areaType === 'modelRef') CurrentSpecificIconComponent = UserGroupIcon;
     else if (inputMode === 'imageFusion' && areaType === 'general') CurrentSpecificIconComponent = SquaresPlusIcon;
     else if (inputMode === 'characterSheet' && areaType === 'general') CurrentSpecificIconComponent = UserCircleIcon;
-    // At this point, CurrentSpecificIconComponent is either a React.FC or the original mainIcon (React.ReactNode) if no condition matched.
 
 
     let previewContent = null;
@@ -903,7 +1252,7 @@ const App: React.FC = () => {
                 </div>
             </div>
         );
-    } else if (areaType === 'general' && (inputMode === 'image' || inputMode === 'characterSheet') && previewUrl && files.length === 1) { // Single image preview for 'image' or 'characterSheet'
+    } else if (areaType === 'general' && (inputMode === 'image' || inputMode === 'characterSheet') && previewUrl && files.length === 1) { 
         previewContent = (
             <>
                 <img src={previewUrl} alt="Selected preview" className="max-h-60 w-auto mx-auto rounded-md shadow-md mb-4 object-contain" />
@@ -924,7 +1273,7 @@ const App: React.FC = () => {
                 )}
             </>
         );
-    } else if (areaType === 'general' && inputMode === 'image' && files.length > 0) { // Batch image list for 'image' mode
+    } else if (areaType === 'general' && inputMode === 'image' && files.length > 0) { 
         previewContent = (
             <div className="mb-4 text-left">
                 <h3 className="font-semibold text-sky-400 mb-2">Selected Files ({files.length}/{maxFiles}):</h3>
@@ -933,18 +1282,15 @@ const App: React.FC = () => {
                 </ul>
             </div>
         );
-    } else { // Placeholder icon
-        const IconToRender = CurrentSpecificIconComponent; // Keep original name for clarity in this block
+    } else { 
+        const IconToRender = CurrentSpecificIconComponent; 
         previewContent = (
             <div className="flex flex-col items-center">
                  {React.isValidElement(IconToRender) ? (
-                    IconToRender // If IconToRender is already a ReactElement (e.g. from mainIcon={<CustomIcon />} )
+                    IconToRender 
                  ) : typeof IconToRender === 'function' ? (
-                    // If IconToRender is a Functional Component (e.g. ShirtIcon, UploadIcon)
                     <IconToRender className="w-12 h-12 text-zinc-500 mx-auto mb-3" />
                  ) : (
-                    // Fallback if IconToRender is some other ReactNode (string, number) or mainIcon was not an element/FC
-                    // This case should ideally not be hit if an icon is expected for placeholder.
                     <UploadIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" /> 
                  )}
             </div>
@@ -1053,6 +1399,7 @@ const App: React.FC = () => {
         {globalProcessingError && <Alert type="error" message={globalProcessingError} onClose={() => setGlobalProcessingError(null)} />}
         {fashionAnalysisError && inputMode === 'fashionPrompt' && <Alert type="error" message={fashionAnalysisError} onClose={() => setFashionAnalysisError(null)} />}
         {fashionQaError && inputMode === 'fashionPrompt' && <Alert type="error" message={fashionQaError} onClose={() => setFashionQaError(null)} />}
+        {replicateError && inputMode === 'fashionPrompt' && showReplicatePanel && <Alert type="error" message={replicateError} onClose={() => setReplicateError(null)} />}
 
 
         <div className="bg-zinc-800 p-6 rounded-xl shadow-xl space-y-6">
@@ -1070,7 +1417,7 @@ const App: React.FC = () => {
               {renderFileUploadArea('backgroundRef', fashionBackgroundRefFiles, fashionBackgroundRefPreviewUrls, MAX_FILES_FASHION_BACKGROUND_REF, "image/*", true, <PhotoIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Background Reference Image(s) (Optional)")}
               {renderFileUploadArea('modelRef', fashionModelRefFiles, fashionModelRefPreviewUrls, MAX_FILES_FASHION_MODEL_REF, "image/*", true, <UserGroupIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Model Reference Image(s) (Optional)")}
             </>
-          ) : ( // General image upload modes
+          ) : ( 
             renderFileUploadArea('general', selectedFiles, imagePreviews, 
                 inputMode === 'imageFusion' ? MAX_FILES_FUSION : 
                 inputMode === 'characterSheet' ? MAX_FILES_CHARACTER_SHEET : MAX_FILES_BATCH_UPLOAD,
@@ -1132,31 +1479,96 @@ const App: React.FC = () => {
                     </p>
                 </div>
                  <div className="bg-zinc-800 p-5 rounded-lg shadow-lg">
-                    <h3 className="font-semibold text-sky-300 mb-2">Initial JSON Prompt (Step 4)</h3>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2">
+                        <h3 className="font-semibold text-sky-300">Initial JSON Prompt (Step 4)</h3>
+                        <Button
+                            onClick={() => handleOpenReplicatePanel(fashionPromptData.initialJsonPrompt, "Initial JSON Prompt")}
+                            variant="secondary"
+                            className="text-xs !py-1 !px-2 mt-2 sm:mt-0"
+                            aria-label="Generate image with Replicate using Initial JSON Prompt"
+                        >
+                            <RocketLaunchIcon className="w-3.5 h-3.5" /> Generate with Replicate
+                        </Button>
+                    </div>
                     <p className="text-gray-200 bg-zinc-700 p-3 rounded-md whitespace-pre-wrap text-sm leading-relaxed pretty-scrollbar max-h-72 overflow-y-auto">
                       {fashionPromptData.initialJsonPrompt}
                     </p>
-                     <Button 
-                        onClick={copyFashionInitialJsonPrompt}
-                        variant="secondary" 
-                        className="w-full sm:w-auto text-sm !py-2 !px-4 mt-3"
-                        aria-label="Copy initial JSON prompt to clipboard"
-                    >
-                      {fashionInitialJsonPromptCopied ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />}
-                      {fashionInitialJsonPromptCopied ? 'Copied!' : 'Copy Initial JSON Prompt'}
-                    </Button>
+                    <div className="flex flex-col sm:flex-row gap-2 mt-3">
+                      <Button 
+                          onClick={copyFashionInitialJsonPrompt}
+                          variant="secondary" 
+                          className="flex-1 sm:flex-none text-sm !py-2 !px-4"
+                          aria-label="Copy initial JSON prompt to clipboard"
+                      >
+                        {fashionInitialJsonPromptCopied ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />}
+                        {fashionInitialJsonPromptCopied ? 'Copied!' : 'Copy Prompt'}
+                      </Button>
+                      <Button 
+                          onClick={handleGenerateInitialPromptImage}
+                          disabled={isGeneratingInitialImage || !fashionGarmentFiles.length}
+                          variant="primary" 
+                          className="flex-1 sm:flex-none text-sm !py-2 !px-4"
+                          aria-label="Generate image from initial JSON prompt"
+                      >
+                        {isGeneratingInitialImage ? <Spinner /> : <WandSparklesIcon className="w-5 h-5" />}
+                        {isGeneratingInitialImage ? 'Generating...' : 'Create Image'}
+                      </Button>
+                    </div>
+                    
+                    {initialImageError && (
+                      <Alert type="error" message={initialImageError} />
+                    )}
+                    
+                    {initialPromptGeneratedImageUrl && (
+                      <div className="mt-4 border-t border-zinc-700 pt-4">
+                        <h4 className="font-medium text-sky-300 mb-2">Generated Image:</h4>
+                        <div className="text-center">
+                          <img 
+                            src={initialPromptGeneratedImageUrl} 
+                            alt="Generated from initial prompt" 
+                            className="max-h-80 w-auto mx-auto rounded-md shadow-md mb-3 object-contain" 
+                          />
+                          <div className="flex justify-center gap-2 flex-wrap">
+                            <Button 
+                              onClick={() => handleCopyImageToClipboard(initialPromptGeneratedImageUrl)}
+                              variant="secondary" 
+                              size="sm"
+                              className="text-xs !py-1 !px-2"
+                            >
+                              <ClipboardIcon className="w-4 h-4" /> Copy Image
+                            </Button>
+                            <Button 
+                              onClick={() => handleDownloadImage(initialPromptGeneratedImageUrl, 'initial-prompt-image')}
+                              variant="secondary" 
+                              size="sm"
+                              className="text-xs !py-1 !px-2"
+                            >
+                              <ArrowDownTrayIcon className="w-4 h-4" /> Download
+                            </Button>
+                            <Button 
+                              onClick={() => handleSendToQA(initialPromptGeneratedImageUrl)}
+                              variant="primary" 
+                              size="sm"
+                              className="text-xs !py-1 !px-2"
+                            >
+                              <ArrowRightCircleIcon className="w-4 h-4" /> Send to QA
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                 </div>
                 
-                <div className="border-t-2 border-zinc-700 pt-6 mt-8 space-y-6">
+                <div id="qa-section" className="border-t-2 border-zinc-700 pt-6 mt-8 space-y-6">
                     <h2 className="text-2xl font-semibold text-sky-400 mb-1">Step 2: QA & Prompt Generation</h2>
                     <p className="text-gray-400 text-sm mb-4">
-                        Use the "Initial JSON Prompt" above in your preferred image generation tool. 
+                        Use the "Initial JSON Prompt" above or generate an image with Replicate. 
                         Then, upload the image you generated below to perform QA and get refined studio & lifestyle prompts.
                     </p>
 
                     <div className="bg-zinc-800 p-6 rounded-xl shadow-xl">
                         <label htmlFor="generatedFashionImageInput" className="block text-md font-medium text-sky-300 mb-3">
-                            Upload Your Generated Image (from Initial Prompt)
+                            Upload Your Generated Image (from Initial Prompt or Replicate)
                         </label>
                         {generatedFashionImagePreviewUrl ? (
                             <div className="mb-4 text-center">
@@ -1201,7 +1613,17 @@ const App: React.FC = () => {
                             <h2 className="text-2xl font-semibold text-sky-400">Refined Studio & Lifestyle Prompts</h2>
                             {refinedStudioPrompts.map((item) => (
                             <div key={item.id} className="bg-zinc-800 p-5 rounded-lg shadow-lg">
-                                <h3 className="font-semibold text-sky-300 mb-2">{item.title}</h3>
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2">
+                                    <h3 className="font-semibold text-sky-300">{item.title}</h3>
+                                    <Button
+                                        onClick={() => handleOpenReplicatePanel(item.prompt, item.title)}
+                                        variant="secondary"
+                                        className="text-xs !py-1 !px-2 mt-2 sm:mt-0"
+                                        aria-label={`Generate image with Replicate using prompt: ${item.title}`}
+                                    >
+                                        <RocketLaunchIcon className="w-3.5 h-3.5" /> Generate with Replicate
+                                    </Button>
+                                </div>
                                 {item.error ? (
                                 <Alert type="error" message={item.error} />
                                 ) : (
@@ -1209,15 +1631,62 @@ const App: React.FC = () => {
                                     <p className="text-gray-200 bg-zinc-700 p-3 rounded-md whitespace-pre-wrap text-sm leading-relaxed pretty-scrollbar max-h-48 overflow-y-auto">
                                     {item.prompt}
                                     </p>
-                                    <Button 
-                                        onClick={() => copyRefinedStudioPrompt(item.id)}
-                                        variant="secondary" 
-                                        className="w-full sm:w-auto text-sm !py-2 !px-4"
-                                        aria-label={`Copy prompt for ${item.title} to clipboard`}
-                                    >
-                                    {item.isCopied ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />}
-                                    {item.isCopied ? 'Copied!' : 'Copy Prompt'}
-                                    </Button>
+                                    <div className="flex flex-col sm:flex-row gap-2">
+                                      <Button 
+                                          onClick={() => copyRefinedStudioPrompt(item.id)}
+                                          variant="secondary" 
+                                          className="flex-1 sm:flex-none text-sm !py-2 !px-4"
+                                          aria-label={`Copy prompt for ${item.title} to clipboard`}
+                                      >
+                                      {item.isCopied ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />}
+                                      {item.isCopied ? 'Copied!' : 'Copy Prompt'}
+                                      </Button>
+                                      <Button 
+                                          onClick={() => handleGenerateQAPromptImage(item.id)}
+                                          disabled={item.isGeneratingImage || !fashionGarmentFiles.length}
+                                          variant="primary" 
+                                          className="flex-1 sm:flex-none text-sm !py-2 !px-4"
+                                          aria-label={`Generate image from prompt: ${item.title}`}
+                                      >
+                                        {item.isGeneratingImage ? <Spinner /> : <WandSparklesIcon className="w-5 h-5" />}
+                                        {item.isGeneratingImage ? 'Generating...' : 'Create Image'}
+                                      </Button>
+                                    </div>
+                                    
+                                    {item.imageError && (
+                                      <Alert type="error" message={item.imageError} />
+                                    )}
+                                    
+                                    {item.generatedImageUrl && (
+                                      <div className="mt-4 border-t border-zinc-700 pt-4">
+                                        <h4 className="font-medium text-sky-300 mb-2">Generated Image:</h4>
+                                        <div className="text-center">
+                                          <img 
+                                            src={item.generatedImageUrl} 
+                                            alt={`Generated from ${item.title}`} 
+                                            className="max-h-80 w-auto mx-auto rounded-md shadow-md mb-3 object-contain" 
+                                          />
+                                          <div className="flex justify-center gap-2">
+                                            <Button 
+                                              onClick={() => handleCopyImageToClipboard(item.generatedImageUrl!)}
+                                              variant="secondary" 
+                                              size="sm"
+                                              className="text-xs !py-1 !px-2"
+                                            >
+                                              <ClipboardIcon className="w-4 h-4" /> Copy Image
+                                            </Button>
+                                            <Button 
+                                              onClick={() => handleDownloadImage(item.generatedImageUrl!, `${item.title.toLowerCase().replace(/\s+/g, '-')}-image`)}
+                                              variant="secondary" 
+                                              size="sm"
+                                              className="text-xs !py-1 !px-2"
+                                            >
+                                              <ArrowDownTrayIcon className="w-4 h-4" /> Download
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
                                 </div>
                                 )}
                             </div>
@@ -1226,6 +1695,169 @@ const App: React.FC = () => {
                     )}
                 </div>
             </div>
+        )}
+
+        {inputMode === 'fashionPrompt' && showReplicatePanel && (
+          <div className="mt-8 border-t-2 border-sky-700 pt-6 space-y-6 bg-zinc-800 p-6 rounded-xl shadow-xl">
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-semibold text-sky-400">Replicate Image Generation</h2>
+                <Button variant="secondary" onClick={() => setShowReplicatePanel(false)} className="!py-1 !px-2 text-xs">
+                    <XCircleIcon className="w-4 h-4" /> Close Panel
+                </Button>
+            </div>
+            
+            <div className="space-y-4">
+                <div>
+                    <label htmlFor="replicatePromptDisplay" className="block text-sm font-medium text-sky-300 mb-1">Using Prompt for: "{replicatePromptTitle}"</label>
+                    <p id="replicatePromptDisplay" className="text-gray-300 bg-zinc-700 p-3 rounded-md whitespace-pre-wrap text-sm leading-relaxed pretty-scrollbar max-h-32 overflow-y-auto">
+                        {replicatePromptText}
+                    </p>
+                </div>
+
+                <div>
+                    <label htmlFor="replicateAspectRatio" className="block text-sm font-medium text-sky-300 mb-1">Aspect Ratio</label>
+                    <select
+                        id="replicateAspectRatio"
+                        value={replicateAspectRatio}
+                        onChange={(e) => setReplicateAspectRatio(e.target.value)}
+                        className="w-full p-2 bg-zinc-700 border border-zinc-600 rounded-lg text-gray-200 focus:ring-1 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200"
+                    >
+                        <option value="1:1">1:1 (Square)</option>
+                        <option value="16:9">16:9 (Widescreen)</option>
+                        <option value="9:16">9:16 (Portrait)</option>
+                        <option value="4:3">4:3 (Landscape)</option>
+                        <option value="3:4">3:4 (Portrait)</option>
+                        <option value="3:2">3:2 (Landscape)</option>
+                        <option value="2:3">2:3 (Portrait)</option>
+                    </select>
+                </div>
+
+                {availableGarmentImagesForReplicate.length > 0 && (
+                    <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                            <p className="text-sm font-medium text-sky-300">Select Garment Images as Input (Required: Both slots must be filled)</p>
+                            {availableGarmentImagesForReplicate.length >= 2 && (
+                                <Button 
+                                    onClick={() => {
+                                        setReplicateInputImage1(availableGarmentImagesForReplicate[0]);
+                                        setReplicateInputImage2(availableGarmentImagesForReplicate[1]);
+                                    }}
+                                    variant="secondary" 
+                                    size="sm"
+                                    className="text-xs !py-1 !px-2"
+                                >
+                                    Quick Select Both
+                                </Button>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                                    Input Image 1: {replicateInputImage1 ? `✅ ${replicateInputImage1.file.name}` : '❌ Not selected'}
+                                </label>
+                                <div className="flex flex-wrap gap-2 items-center">
+                                    {availableGarmentImagesForReplicate.map((img, idx) => (
+                                        <button
+                                            key={`repl-img1-sel-${idx}`}
+                                            onClick={() => handleToggleReplicateImageSelection(img, 1)}
+                                            className={`p-1 border-2 rounded-md transition-all ${
+                                                replicateInputImage1?.file.name === img.file.name && replicateInputImage1?.file.lastModified === img.file.lastModified
+                                                    ? 'border-sky-500 ring-2 ring-sky-500' 
+                                                    : 'border-zinc-600 hover:border-sky-400'
+                                            }`}
+                                            aria-pressed={replicateInputImage1?.file.name === img.file.name && replicateInputImage1?.file.lastModified === img.file.lastModified}
+                                            aria-label={`Select ${img.file.name} for Replicate Input Image 1`}
+                                        >
+                                            <img src={img.dataUrl} alt={img.file.name} className="h-16 w-16 object-contain rounded-sm"/>
+                                        </button>
+                                    ))}
+                                    {replicateInputImage1 && (
+                                        <Button variant="secondary" size="sm" onClick={() => setReplicateInputImage1(null)} className="text-xs !py-0.5 !px-1.5 self-start">
+                                            <XCircleIcon className="w-3 h-3"/> Clear Slot 1
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                             <div>
+                                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                                    Input Image 2: {replicateInputImage2 ? `✅ ${replicateInputImage2.file.name}` : '❌ Not selected'}
+                                </label>
+                                 <div className="flex flex-wrap gap-2 items-center">
+                                    {availableGarmentImagesForReplicate.map((img, idx) => (
+                                        <button
+                                            key={`repl-img2-sel-${idx}`}
+                                            onClick={() => handleToggleReplicateImageSelection(img, 2)}
+                                            className={`p-1 border-2 rounded-md transition-all ${
+                                                replicateInputImage2?.file.name === img.file.name && replicateInputImage2?.file.lastModified === img.file.lastModified
+                                                    ? 'border-sky-500 ring-2 ring-sky-500' 
+                                                    : 'border-zinc-600 hover:border-sky-400'
+                                            }`}
+                                            aria-pressed={replicateInputImage2?.file.name === img.file.name && replicateInputImage2?.file.lastModified === img.file.lastModified}
+                                            aria-label={`Select ${img.file.name} for Replicate Input Image 2`}
+                                        >
+                                            <img src={img.dataUrl} alt={img.file.name} className="h-16 w-16 object-contain rounded-sm"/>
+                                        </button>
+                                    ))}
+                                    {replicateInputImage2 && (
+                                         <Button variant="secondary" size="sm" onClick={() => setReplicateInputImage2(null)} className="text-xs !py-0.5 !px-1.5 self-start">
+                                            <XCircleIcon className="w-3 h-3"/> Clear Slot 2
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                         <p className="text-xs text-zinc-500 mt-1">
+                            The Replicate model being used requires both input images to work. Please select exactly two of your uploaded garment images.
+                        </p>
+                    </div>
+                )}
+
+
+                <Button
+                    onClick={handleGenerateWithReplicate}
+                    disabled={!canSubmitReplicate()}
+                    className="w-full text-lg"
+                    aria-label="Generate image using Replicate with current settings"
+                >
+                    {isReplicateLoading ? <Spinner /> : <RocketLaunchIcon className="w-5 h-5" />}
+                    Start Image Generation (Replicate)
+                </Button>
+                
+                {!canSubmitReplicate() && !isReplicateLoading && replicatePromptText && (
+                    <p className="text-amber-400 text-sm mt-2 text-center">
+                        ⚠️ Please select both input images (Image 1 and Image 2) to generate with this model.
+                    </p>
+                )}
+            </div>
+
+            {isReplicateLoading && (
+                <div className="mt-4 p-4 bg-zinc-700 rounded-md text-center">
+                    <Spinner className="w-8 h-8 mx-auto mb-2" />
+                    <p className="text-sky-300">Generating image with Replicate...</p>
+                     <p className="text-xs text-zinc-400 mt-1">This may take a few minutes depending on the model and queue.</p>
+                </div>
+            )}
+            
+            {replicateResultImageUrl && !isReplicateLoading && (
+                <div className="mt-6">
+                    <h3 className="text-xl font-semibold text-sky-300 mb-3">Generated Image:</h3>
+                    <div className="bg-zinc-700 p-3 rounded-lg shadow-inner">
+                        <img 
+                            src={replicateResultImageUrl} 
+                            alt="Image generated by Replicate" 
+                            className="max-w-full h-auto mx-auto rounded-md shadow-md"
+                            onError={() => {
+                                setReplicateError("Failed to load the generated image. The URL might be invalid or expired (this is a mock URL).");
+                                setReplicateResultImageUrl(null);
+                            }}
+                        />
+                    </div>
+                     <p className="text-xs text-zinc-500 mt-2 text-center">
+                        Generated image from Replicate. You can drag this image to your desktop or right-click to save.
+                    </p>
+                </div>
+            )}
+          </div>
         )}
 
 
@@ -1339,7 +1971,7 @@ const App: React.FC = () => {
 
 
        <footer className="w-full max-w-3xl mt-12 mb-8 text-center text-sm text-gray-500">
-        <p>&copy; {new Date().getFullYear()} Detailed Prompt Generator AI. Powered by Gemini.</p>
+        <p>&copy; {new Date().getFullYear()} Detailed Prompt Generator AI. Powered by Gemini & Replicate (mock).</p>
       </footer>
        <style>{`
         .pretty-scrollbar::-webkit-scrollbar {
