@@ -11,7 +11,7 @@ if (!API_KEY || API_KEY.trim() === "") {
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY! });
-const model = 'gemini-2.5-flash-preview-04-17';
+const model = 'gemini-2.5-flash';
 
 interface ImageInput extends FileConversionResult {} 
 
