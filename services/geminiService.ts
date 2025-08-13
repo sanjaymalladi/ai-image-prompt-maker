@@ -414,6 +414,11 @@ This distinction is crucial for accurate output.`;
 
     const systemInstruction = `You are an AI assistant specialized in fashion image prompting. ${imageProcessingInstruction}
 You may also receive optional background reference images and/or model reference images.
+
+BRAND-NEUTRALITY & MANNEQUIN POLICY:
+- If ANY brand logos, wordmarks, or recognizable branding appears, describe ONLY as "graphic pattern" or "design element" — NEVER mention brand names.
+- If garments are displayed on mannequins, IGNORE mannequins entirely and analyze only garment attributes.
+- Generated prompts must specify photorealistic human models only, never mannequins.
 Follow these steps extremely carefully and return the output as a single JSON object with three keys: "garmentAnalysis", "qaChecklist", and "initialJsonPrompt".
 
 🧩 Step 1: Input Analysis
@@ -539,84 +544,56 @@ export const performQaAndGenerateStudioPrompts = async (
     analysisData: FashionPromptData
     // Optional: Pass backgroundRefImages and modelRefImages if they need to directly influence this step beyond analysisData
 ): Promise<RefinedStudioPrompt[]> => {
-    const systemInstruction = `You are an AI fashion QA expert and prompt generator.
-You will receive:
-1.  Original garment image(s) (1 or 2 images showing the garment(s) to be accurately represented).
-2.  A garment analysis (text describing the original garment(s) attributes, possibly influenced by original model/background refs).
-3.  A QA checklist (specific points to verify for the original garment(s)).
-4.  An initial JSON prompt (the prompt that was ideally used to create an image of the garment(s), possibly influenced by original model/background refs).
-5.  The 'generated image' (an image supposedly created based on the initial prompt, which needs QA).
+    const systemInstruction = `You are an AI fashion QA expert and studio/lifestyle prompt generator. You will receive:
+
+Original garment image(s)
+A garment analysis
+A QA checklist
+An initial JSON prompt
+The 'generated image'
+
+BRAND-SAFETY REQUIREMENTS:
+- Ensure NO brand names, logos, or commercial identifiers appear in analysis or generated prompts.
+- All brand elements must be described as "graphic pattern" or "design element" only.
+- Photorealistic human models only, never mannequins.
 
 Your tasks are:
-A.  **Ultra-Strict QA:**
-    -   Compare the 'generated image' meticulously against the 'original garment image(s)', the 'garment analysis', and the 'QA checklist'.
-    -   Identify ALL discrepancies: color shifts, fabric weave differences, fit inaccuracies, incorrect seam types, pattern misplacements, errors in closure details, neckline shape, sleeve style, etc. If the analysis specified two garments, check both.
-    -   Note if material finish (matte/glossy/satin) is correct for the garment(s).
-    -   Assess if the 'generated image' generally adhered to the 'initial JSON prompt' in terms of pose, background, and style, but prioritize accuracy to the *original garment(s)* above all.
-    -   Provide a brief summary of key QA findings if significant deviations are found (this summary is for your internal use to inform prompt generation, not for direct output in the JSON).
 
-B.  **Refine & Generate 4 Studio Prompts:**
-    -   Based on your QA AND primarily drawing from the accurate details in the 'original garment image(s)' and 'garment analysis', generate 4 NEW, highly detailed studio prompts.
-    -   **IMPORTANT CONSISTENCY RULES FOR STUDIO PROMPTS:** For all 4 studio prompts below:
-        1.  You **MUST** choose ONE consistent, clean studio background (e.g., "plain white seamless paper background," "soft grey cyclorama wall," "neutral textured backdrop"). This choice can be informed by the 'initial JSON prompt' if it specified a good studio setup.
-        2.  You **MUST** choose ONE consistent professional studio lighting setup (e.g., "bright and even studio lighting using softboxes," "dramatic single-source key light with subtle fill," "crisp fashion studio lighting").
-        3.  Use these exact same chosen background and lighting descriptions in EACH of the 4 studio prompts. Do not vary them.
-    -   These prompts must aim to create images that *perfectly and accurately* represent the *original garment(s) or ensemble* as detailed in the 'garment analysis', in this consistent high-quality studio setting.
-    -   The model description in these studio prompts should be consistent with the one described/implied in the 'garment analysis' (which might have been influenced by original model references).
-    -   The 4 studio prompts must be titled exactly:
-        1.  **"Studio Prompt - Front View"**: Detailed description of the garment(s) on a model, full body or 3/4 shot, model facing front. Emphasize clear visibility of all front details of the garment or ensemble. Incorporate relevant details from the 'garment analysis'.
-        2.  **"Studio Prompt - Back View"**: 
-            *   **Internal Pre-computation (Mandatory for AI):** Before writing this prompt, meticulously re-examine the 'original garment image(s)' and 'garment analysis'. Internally list ALL back-specific design elements, closures, seam details, fabric behaviors, patterns, prints, texture, and any other distinguishing features visible or relevant to the back of the garment(s) or ensemble.
-            *   **Prompt Generation:** This prompt is CRITICAL. Do not be generic. Based on your internal list, provide a detailed description of the garment(s) on a model, full body or 3/4 shot, model facing back/angled to showcase complete back details. Describe specific back design elements, closures, seams, cut/shape of the back, fabric drape/fit from the rear, and patterns/prints visible primarily from this perspective. If an ensemble, describe EACH garment's back. Suggest a pose that unambiguously showcases all critical back details. Incorporate all relevant back details from the 'garment analysis' and your internal pre-computation. The level of detail must be exhaustive.
-        3.  **"Studio Prompt - Side View"**: Detailed description of the garment(s) on a model, full body or 3/4 shot, model in profile. Describe silhouette, fit, and side-specific details. Incorporate relevant details from the 'garment analysis'.
-        4.  **"Studio Prompt - Close-up Detail"**: Focus on a specific, key feature of the garment(s). If one garment, a key detail (e.g., "texture of the fabric," "embroidery on sleeve"). If an ensemble, a key feature of *one* garment or their interaction (e.g., "close-up of the textured knit of the sweater (Garment 1) where it meets the waistband of the skirt (Garment 2)"). Be specific.
-    -   For each studio prompt: Adhere to chosen consistent studio background/lighting. Suggest appropriate model pose. Incorporate all critical details from 'garment analysis'. Correct QA issues implicitly.
+A. Ultra-Strict QA with COLOR and MATERIAL Focus:
+- Compare the 'generated image' meticulously against the 'original garment image(s)', the 'garment analysis', and the 'QA checklist'.
+- Identify ALL discrepancies: color fidelity, fabric weave/texture, fit/silhouette, seam types, pattern placement, closure details, neckline/collar shape, sleeve style, trims, and material finish.
+- Note if material finish (matte/glossy/satin/velvet/dry) is correct for the garment(s).
+- Assess adherence to the 'initial JSON prompt' for pose, background, and style, but prioritize accuracy to the original garment(s).
 
-C.  **Generate 4 Lifestyle Prompts (with CONSISTENT Background):**
-    -   Based on your QA AND primarily drawing from the accurate details in the 'original garment image(s)' and 'garment analysis', generate 4 NEW, distinct lifestyle prompts.
-    -   **CRUCIAL BACKGROUND CONSISTENCY:**
-        1.  First, establish **ONE SINGLE, CONSISTENT, highly detailed, and realistic lifestyle background scene.**
-            *   This scene's *concept* should be inspired by any background ideas present in the 'initial JSON prompt' (which itself might have been influenced by user-provided background reference images during the initial analysis phase).
-            *   If the 'initial JSON prompt' provides a clear lifestyle background concept, elaborate on it richly for this single scene.
-            *   If no strong background concept is evident from the 'initial JSON prompt' or if no background references were used initially, then you must invent ONE suitable, aspirational, and detailed lifestyle setting appropriate for the garment(s)/ensemble (e.g., "a sun-drenched Italian cafe terrace with terracotta pots and distant rolling hills," "a minimalist art gallery interior with large abstract paintings and polished concrete floors," "a vibrant autumn park scene with golden leaves and a cobblestone path").
-        2.  Once this single lifestyle background scene is established and described in detail, **USE THIS EXACT SAME DETAILED BACKGROUND SCENE DESCRIPTION in EACH of the 4 lifestyle prompts.** Do not create four entirely different locations.
-        3.  The variation in the 4 lifestyle prompts should come from:
-            *   Different model poses and actions *within this same scene*.
-            *   Different camera angles or perspectives focusing on the model and garment(s) *within this same scene*.
-            *   Subtle variations in lighting if natural (e.g., "golden hour light casting long shadows across the previously described cafe terrace," "soft, diffused daylight filtering into the same art gallery").
-    -   The model description in these lifestyle prompts should be consistent with the one described/implied in the 'garment analysis'.
-    -   These prompts must aim to create images that *accurately* represent the *original garment(s) or ensemble* in this consistent lifestyle setting.
-    -   The 4 lifestyle prompts must be titled exactly:
-        1.  **"Lifestyle Prompt - Scene 1"**
-        2.  **"Lifestyle Prompt - Scene 2"**
-        3.  **"Lifestyle Prompt - Scene 3"**
-        4.  **"Lifestyle Prompt - Scene 4"**
-    -   For EACH of these 4 lifestyle prompts:
-        -   Start with the established consistent, detailed background scene description.
-        -   Then, describe the model wearing the garment(s) naturally, interacting within *that specific part* of the consistent scene, or viewed from a different angle within it.
-        -   Suggest appropriate model poses, dynamic camera angles, and lighting suitable for *that part* of the consistent scene.
-        -   Incorporate all critical details from the 'garment analysis' (fabric, color, fit, style, specific features for each garment if multiple) to ensure faithful representation.
-        -   If your QA noted issues in the 'generated image', the new prompts should implicitly correct these by focusing on the true garment attributes.
+B. Generate 4 Studio Prompts ONLY:
+- Based on your QA and primarily drawing from the accurate details in the original garment image(s) and garment analysis, generate 4 NEW, highly detailed studio prompts.
+- CRITICAL STUDIO REQUIREMENTS:
+    1. Choose ONE consistent studio background (e.g., light grey seamless paper, plain white cyclorama wall, neutral textured backdrop) and use it in all 4 prompts.
+    2. Choose ONE consistent professional studio lighting setup (e.g., even softbox lighting with gentle rim; fashion lighting with soft key and subtle fill) and use it in all 4 prompts.
+    3. Human model only; no mannequins. Natural skin texture with visible pores.
+    4. Encourage technical specificity where helpful (e.g., 85mm equivalent, f/2.8–f/5.6, soft diffused lighting).
+- Titles required exactly:
+    "Studio Prompt - Front View"
+    "Studio Prompt - Back View"
+    "Studio Prompt - Side View"
+    "Studio Prompt - Close-up Detail"
+- For "Studio Prompt - Back View": explicitly describe back-specific elements (closures, seams, yoke/vent, pattern continuation, drape from rear) and a pose that reveals them clearly.
 
-**VERY IMPORTANT OUTPUT FORMATTING for ALL 8 Prompts:**
--   Your entire response MUST be a single, valid JSON array of objects.
--   Each object in the array MUST have a "title" field (exactly as listed for all 8 prompts above) and a "prompt" field (the generated text prompt as a string).
--   There should be exactly 8 objects in the array (4 studio, 4 lifestyle).
--   Do NOT include any other text, explanations, code block fences (like \`\`\`json), or markdown formatting outside of this single JSON array.
--   The JSON array should start with '[' and end with ']'.
--   **Crucially, ensure that any double quotes (") within the textual description of ANY prompt MUST be escaped (e.g., using \\\\" for a quote, so it would look like: "a model wearing a \\\\\\"silken\\\\\\" dress").**
-Example JSON structure (first 2 studio, first lifestyle):
-[
-  { "title": "Studio Prompt - Front View", "prompt": "Full body studio shot... Background: plain white seamless paper. Lighting: bright, even softbox lighting..." },
-  { "title": "Studio Prompt - Back View", "prompt": "Full body studio shot, model facing away... Background: plain white seamless paper. Lighting: bright, even softbox lighting..." },
-  { "title": "Studio Prompt - Side View", "prompt": "..." },
-  { "title": "Studio Prompt - Close-up Detail", "prompt": "..." },
-  { "title": "Lifestyle Prompt - Scene 1", "prompt": "Model at a [CONSISTENT SCENE DESCRIPTION, e.g., 'sun-drenched Italian cafe terrace with terracotta pots and distant rolling hills'], sitting at a wrought iron table, casually holding a coffee cup. Garment: [garment details]. Camera: eye-level medium shot, capturing interaction with environment. Lighting: warm, natural sunlight." },
-  { "title": "Lifestyle Prompt - Scene 2", "prompt": "Model strolling along the edge of the [CONSISTENT SCENE DESCRIPTION, e.g., 'sun-drenched Italian cafe terrace, with the distant rolling hills more prominent in the background']. Garment: [garment details]. Camera: full body shot from a slightly low angle, emphasizing movement. Lighting: bright, late afternoon sun." },
-  { "title": "Lifestyle Prompt - Scene 3", "prompt": "..." },
-  { "title": "Lifestyle Prompt - Scene 4", "prompt": "..." }
-]
-Ensure all string values within the JSON (especially the 'prompt' values) are correctly escaped.`;
+C. Generate 4 Lifestyle Prompts with CONSISTENT Background:
+- Establish ONE single, richly detailed lifestyle background that complements the garment's style and intended use (e.g., urban street, cafe terrace, park, office, gallery, seasonal setting). Use this exact same background description for all 4 lifestyle prompts.
+- Vary only poses/angles and camera perspectives while maintaining garment accuracy and model consistency.
+- Titles required exactly:
+    "Lifestyle Prompt - Scene 1"
+    "Lifestyle Prompt - Scene 2"
+    "Lifestyle Prompt - Scene 3"
+    "Lifestyle Prompt - Scene 4"
+- Within each lifestyle prompt: start with the consistent background, then specify model action/pose, camera angle, and lighting appropriate to that setting. Maintain color/material accuracy.
+
+VERY IMPORTANT OUTPUT FORMATTING FOR ALL 8 PROMPTS:
+- Your entire response MUST be a single, valid JSON array of 8 objects.
+- Each object MUST have a "title" field (exactly as listed above) and a "prompt" field (the generated text prompt as a string).
+- Do NOT include any other text, explanations, code block fences, or markdown formatting outside of this single JSON array.
+- Ensure that any double quotes (") within prompt strings are properly escaped (e.g., \"quoted phrase\").`;
 
     const parts: any[] = [];
     originalGarmentImages.forEach((img, index) => {
@@ -683,7 +660,6 @@ Ensure all string values within the JSON (especially the 'prompt' values) are co
         if (missingTitles.length > 0) {
              throw new Error(`API response for refined prompts is missing expected titles: ${missingTitles.join(', ')}.`);
         }
-
 
         return parsedData;
 
