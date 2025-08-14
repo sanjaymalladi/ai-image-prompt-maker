@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, ChangeEvent, useEffect, DragEvent } from 'react';
-import { generateDetailedPrompt, generateCharacterSheetPrompts, refineCharacterSheetPrompts, generateFashionAnalysisAndInitialJsonPrompt, performQaAndGenerateStudioPrompts } from './services/geminiService';
+import { generateDetailedPrompt, generateCharacterSheetPrompts, refineCharacterSheetPrompts, generateFashionAnalysisAndInitialJsonPrompt, performQaAndGenerateStudioPrompts, buildDefaultFashionAnalysisSystemInstruction, getDefaultFashionQaSystemInstruction } from './services/geminiService';
 import { generateImageViaReplicate } from './services/replicateService'; // New service
 import { fileToBase64WithType, FileConversionResult } from './utils/fileUtils';
 import { Button } from './components/Button';
@@ -95,6 +95,11 @@ const App: React.FC = () => {
   const [fashionQaError, setFashionQaError] = useState<string | null>(null);
   const [refinedStudioPrompts, setRefinedStudioPrompts] = useState<RefinedStudioPromptItem[] | null>(null);
   const [fashionQaFindings, setFashionQaFindings] = useState<string | null>(null);
+  const [fashionAnalysisSystemPrompt, setFashionAnalysisSystemPrompt] = useState<string>(() => localStorage.getItem('fashionAnalysisSystemPrompt') || '');
+  const [fashionQaSystemPrompt, setFashionQaSystemPrompt] = useState<string>(() => localStorage.getItem('fashionQaSystemPrompt') || '');
+
+  useEffect(() => { localStorage.setItem('fashionAnalysisSystemPrompt', fashionAnalysisSystemPrompt); }, [fashionAnalysisSystemPrompt]);
+  useEffect(() => { localStorage.setItem('fashionQaSystemPrompt', fashionQaSystemPrompt); }, [fashionQaSystemPrompt]);
 
   // State for Replicate Image Generation
   const [showReplicatePanel, setShowReplicatePanel] = useState<boolean>(false);
@@ -696,7 +701,8 @@ const App: React.FC = () => {
         const results = await generateFashionAnalysisAndInitialJsonPrompt(
             garmentImageInputs,
             backgroundRefImageInputs,
-            modelRefImageInputs
+            modelRefImageInputs,
+            fashionAnalysisSystemPrompt || undefined
         );
         setFashionPromptData(results);
     } catch (err: any) {
@@ -724,7 +730,8 @@ const App: React.FC = () => {
         const results = await performQaAndGenerateStudioPrompts(
             originalGarmentImageInputs,
             generatedFashionImageInput,
-            fashionPromptData
+            fashionPromptData,
+            fashionQaSystemPrompt || undefined
         );
         
         setFashionQaFindings(results.qaFindings);
@@ -1423,6 +1430,41 @@ const App: React.FC = () => {
               {renderFileUploadArea('garment', fashionGarmentFiles, fashionGarmentPreviewUrls, MAX_FILES_FASHION_PROMPT, "image/*", true, <ShirtIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Garment Image(s)")}
               {renderFileUploadArea('backgroundRef', fashionBackgroundRefFiles, fashionBackgroundRefPreviewUrls, MAX_FILES_FASHION_BACKGROUND_REF, "image/*", true, <PhotoIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Background Reference Image(s) (Optional)")}
               {renderFileUploadArea('modelRef', fashionModelRefFiles, fashionModelRefPreviewUrls, MAX_FILES_FASHION_MODEL_REF, "image/*", true, <UserGroupIcon className="w-12 h-12 text-zinc-500 mx-auto mb-3" />, "Model Reference Image(s) (Optional)")}
+
+              <div className="bg-zinc-800 p-4 rounded-lg border border-zinc-700 mt-4 space-y-4">
+                <h3 className="font-semibold text-sky-300">Advanced: System Prompt Overrides (Optional)</h3>
+                <div>
+                  <label className="block text-sm font-medium text-sky-300 mb-1">Analysis System Prompt Override</label>
+                  <p className="text-xs text-zinc-400 mb-1">Default shown below. Edit the textarea to override it.</p>
+                  <pre className="text-xs bg-zinc-900 border border-zinc-700 rounded-md p-2 mb-2 whitespace-pre-wrap pretty-scrollbar max-h-40 overflow-y-auto">
+                    {buildDefaultFashionAnalysisSystemInstruction(
+                      fashionGarmentFiles.length,
+                      fashionBackgroundRefFiles.length > 0,
+                      fashionModelRefFiles.length > 0
+                    )}
+                  </pre>
+                  <textarea
+                    value={fashionAnalysisSystemPrompt}
+                    onChange={(e) => setFashionAnalysisSystemPrompt(e.target.value)}
+                    placeholder="Leave blank to use the built-in analysis system prompt..."
+                    className="w-full h-28 p-3 bg-zinc-700 border border-zinc-600 rounded-lg text-gray-200 focus:ring-1 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200 resize-none placeholder-zinc-500 pretty-scrollbar text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-sky-300 mb-1">QA System Prompt Override</label>
+                  <p className="text-xs text-zinc-400 mb-1">Default shown below. Edit the textarea to override it.</p>
+                  <pre className="text-xs bg-zinc-900 border border-zinc-700 rounded-md p-2 mb-2 whitespace-pre-wrap pretty-scrollbar max-h-40 overflow-y-auto">
+                    {getDefaultFashionQaSystemInstruction()}
+                  </pre>
+                  <textarea
+                    value={fashionQaSystemPrompt}
+                    onChange={(e) => setFashionQaSystemPrompt(e.target.value)}
+                    placeholder="Leave blank to use the built-in QA system prompt..."
+                    className="w-full h-28 p-3 bg-zinc-700 border border-zinc-600 rounded-lg text-gray-200 focus:ring-1 focus:ring-sky-500 focus:border-sky-500 transition-colors duration-200 resize-none placeholder-zinc-500 pretty-scrollbar text-sm"
+                  />
+                </div>
+                <p className="text-xs text-zinc-400">These values are saved locally in your browser and apply immediately without redeploying.</p>
+              </div>
             </>
           ) : ( 
             renderFileUploadArea('general', selectedFiles, imagePreviews, 

@@ -398,7 +398,8 @@ Ensure any double quotes within the prompt strings themselves are properly escap
 export const generateFashionAnalysisAndInitialJsonPrompt = async (
     garmentImages: ImageInput[],
     backgroundRefImages?: ImageInput[],
-    modelRefImages?: ImageInput[]
+    modelRefImages?: ImageInput[],
+    systemInstructionOverride?: string
 ): Promise<FashionPromptData> => {
     if (!garmentImages || garmentImages.length === 0 || garmentImages.length > 2) {
         throw new Error("Please provide 1 or 2 garment images.");
@@ -429,7 +430,7 @@ This distinction is crucial for accurate output.`;
     }
 
 
-    const systemInstruction = `You are an AI assistant specialized in fashion image prompting. ${imageProcessingInstruction}
+    const systemInstructionDefault = `You are an AI assistant specialized in fashion image prompting. ${imageProcessingInstruction}
 You may also receive optional background reference images and/or model reference images.
 
 BRAND-NEUTRALITY & MANNEQUIN POLICY:
@@ -484,8 +485,12 @@ ${referenceImageInstructions ? `\n- Also consider any provided reference images 
 Return a single JSON object with the keys "garmentAnalysis", "qaChecklist", and "initialJsonPrompt".
 Do not include any other text, explanations, or markdown formatting outside this JSON object.
 The entire response MUST be a single, valid JSON object.
-Ensure any double quotes within the string values (especially 'initialJsonPrompt') are properly escaped (e.g., "a \\"quoted\\" phrase").
+Ensure any double quotes within the string values (especially 'initialJsonPrompt') are properly escaped (e.g., "a \\\"quoted\\\" phrase").
 `;
+
+    const systemInstruction = (systemInstructionOverride && systemInstructionOverride.trim() !== '')
+        ? systemInstructionOverride
+        : systemInstructionDefault;
 
     const parts: any[] = [];
     garmentImages.forEach((img, idx) => {
@@ -563,10 +568,11 @@ Ensure any double quotes within the string values (especially 'initialJsonPrompt
 export const performQaAndGenerateStudioPrompts = async (
     originalGarmentImages: ImageInput[],
     generatedFashionImage: ImageInput,
-    analysisData: FashionPromptData
+    analysisData: FashionPromptData,
+    qaSystemInstructionOverride?: string
     // Optional: Pass backgroundRefImages and modelRefImages if they need to directly influence this step beyond analysisData
 ): Promise<QaAndPromptsResult> => {
-    const systemInstruction = `You are an AI fashion QA expert and studio/lifestyle prompt generator. You will receive:
+    const systemInstructionDefault = `You are an AI fashion QA expert and studio/lifestyle prompt generator. You will receive:
 
 Original garment image(s)
 A garment analysis
@@ -617,7 +623,11 @@ VERY IMPORTANT OUTPUT FORMAT:
   - "prompts": An array of exactly 8 objects for the refined prompts.
 - Each item in "prompts" MUST have a "title" (exactly as listed above) and a "prompt" string.
 - Do NOT include any other text, explanations, or code fences outside of this single JSON object.
-- Ensure double quotes inside strings are escaped (e.g., \"quoted phrase\").`;
+    - Ensure double quotes inside strings are escaped (e.g., \"quoted phrase\").`;
+
+    const systemInstruction = (qaSystemInstructionOverride && qaSystemInstructionOverride.trim() !== '')
+        ? qaSystemInstructionOverride
+        : systemInstructionDefault;
 
     const parts: any[] = [];
     originalGarmentImages.forEach((img, index) => {
@@ -722,4 +732,148 @@ VERY IMPORTANT OUTPUT FORMAT:
         }
         throw new Error("An unknown error occurred while communicating with the Gemini API for QA and prompt generation.");
     }
+};
+
+// Helpers to expose default system prompts for UI preview
+export const buildDefaultFashionAnalysisSystemInstruction = (
+    garmentImagesCount: number,
+    hasBackgroundRefs: boolean,
+    hasModelRefs: boolean
+): string => {
+    const isTwoGarments = garmentImagesCount === 2;
+    let imageProcessingInstruction = "You will be provided with one image of a garment. Analyze it accordingly.";
+    if (isTwoGarments) {
+        imageProcessingInstruction = `You will be provided with two garment images.
+First, determine if these two images show:
+(a) The same garment from different perspectives or details.
+(b) Two distinct garments (e.g., a top and a bottom, or two different dresses).
+
+If **(a) same garment**: Synthesize all information from both images into a single, comprehensive analysis for that one garment. The 'initialJsonPrompt' should feature this single garment.
+If **(b) two distinct garments**:
+    - Your 'garmentAnalysis' string must clearly separate the analysis for each garment. Use a format like:
+      '**Garment 1 ([briefly name/describe garment from image 1, e.g., Red Silk Blouse]):**\\n[Detailed analysis of Garment 1]\\n\\n**Garment 2 ([briefly name/describe garment from image 2, e.g., Black Denim Jeans]):**\\n[Detailed analysis of Garment 2]'
+    - Your 'qaChecklist' string must similarly separate checks for each distinct garment, using a similar heading format.
+    - Your 'initialJsonPrompt' (Step 4) must aim to generate an image featuring **both distinct garments** styled appropriately together on a model (or models, if logical for the garments). The prompt should describe this complete look or ensemble clearly.
+This distinction is crucial for accurate output.`;
+    }
+    let referenceImageInstructions = "";
+    if (hasBackgroundRefs) {
+        referenceImageInstructions += `\n- Optional background reference image(s) are provided. Analyze these for style, mood, key elements, or composition. When generating the 'initialJsonPrompt' (Step 4), ensure the **STUDIO background** description is subtly inspired or influenced by these references (e.g., color palette, texture hints, overall mood) while remaining a studio setting. Do not simply copy the reference; integrate its essence.`;
+    }
+    if (hasModelRefs) {
+        referenceImageInstructions += `\n- Optional model reference image(s) are provided. Analyze these for model appearance (e.g., general features, hair style/color, ethnicity if clearly discernible and relevant, body type). When generating the 'initialJsonPrompt' (Step 4), the description of the model wearing the garment(s) should reflect these observed characteristics from the reference images. Aim for the generated model to resemble the reference(s).`;
+    }
+    const systemInstructionDefault = `You are an AI assistant specialized in fashion image prompting. ${imageProcessingInstruction}
+You may also receive optional background reference images and/or model reference images.
+
+BRAND-NEUTRALITY & MANNEQUIN POLICY:
+- If ANY brand logos, wordmarks, or recognizable branding appears, describe ONLY as "graphic pattern" or "design element" — NEVER mention brand names.
+- If garments are displayed on mannequins, IGNORE mannequins entirely and analyze only garment attributes.
+- Generated prompts must specify photorealistic human models only, never mannequins.
+Follow these steps extremely carefully and return the output as a single JSON object with three keys: "garmentAnalysis", "qaChecklist", and "initialJsonPrompt".
+
+🧩 Step 1: Input Analysis
+- Study the input garment image(s) in detail. (Handle 1 or 2 images as per the initial instruction above).
+- Extract and document the following attributes. If analyzing two distinct garments, do this for each:
+    - Garment type (e.g., T-shirt, kurta, dress, onesie, jacket, trousers)
+    - Target wearer (infant / child / adult male / adult female)
+    - Fabric type and weave (cotton, silk, denim, wool, polyester, jersey, etc.)
+    - Color tone (with nuance: e.g., muted dusty blue, vibrant cherry red, matte olive green)
+    - Material finish (matte / glossy / satin / velvet / dry)
+    - Neckline or collar shape (round neck, V-neck, shirt collar, mandarin collar, lapel)
+    - Sleeve style (sleeveless, cap sleeves, cuffed full sleeves, raglan, drop shoulder)
+    - Closure details (button, zipper, hook — count, type, spacing, material)
+    - Seam type (topstitched, hidden seams, visible decorative seams)
+    - Print, embroidery, or patterns (type, size, placement)
+    - Fit style (relaxed, slim, oversized, flared)
+    - Trims and additional details (pockets, lace, elastics, belts, hoodie)
+    - Edge finishing (folded, topstitched, raw hem, piped)
+    - Drape and structure (soft flowy, structured crisp, rigid denim, etc.)
+- Format this 'garmentAnalysis' as a multi-line string. If two distinct garments, ensure clear separation as instructed.
+${referenceImageInstructions ? `\n- Also consider any provided reference images for background or model appearance when formulating descriptions later, but the core garment analysis here is based on the garment images ONLY.` : ''}
+
+🛡 Step 2: Checklist Preparation
+- Based on the extracted garment attributes from Step 1, dynamically build a strict QA checklist. If analyzing two distinct garments, create checklist sections for each.
+- Add special checks based on garment type(s).
+    - Example: For suits → lapel sharpness, vent symmetry.
+    - Example: For baby onesies → snap closure spacing, fabric softness.
+- Format this 'qaChecklist' as a multi-line string. If two distinct garments, ensure clear separation.
+
+🎯 Step 3: Set Ultra-Strict QA Mode
+- (This is an internal mode for you for future QA if applicable. No specific text output needed for this key in THIS response, but keep it in mind.)
+
+📈 Step 4: Give a JSON prompt for generating an output
+- Based on the input analysis (Step 1) and the QA checklist (Step 2), give a detailed JSON prompt string.
+- This JSON prompt string should be suitable for use in an AI image generation model.
+- The prompt should aim to generate a premium image (for socials and print) featuring the garment(s) on an appropriate person/people (inferred from garment analysis).
+- If one garment was analyzed, feature that garment. If two distinct garments were analyzed, the prompt must feature **both distinct garments** styled as an ensemble or complete look.
+- The prompt must specify a **STUDIO background**.
+    - If background reference images were provided (see Step 1 instructions), ensure the studio background description (e.g., seamless paper color, texture, simple props) is creatively inspired by their style, mood, or key elements, while *remaining a clean studio setup*. For example, if a reference shows a moody forest, the studio background might be "dark olive green seamless paper with subtle dappled lighting effect" rather than an actual forest.
+    - If no background references, use a standard professional studio background (e.g., "light grey seamless paper," "plain white cyclorama wall").
+- The prompt must specify professional studio lighting.
+- If model reference images were provided (see Step 1 instructions), the description of the model in this JSON prompt should aim to have the generated model resemble the characteristics (features, hair, ethnicity, body type if discernible and appropriate) from those reference images.
+- Include model pose(s) and encourage variations to ensure diverse outputs when used.
+- This "initialJsonPrompt" must be a single string (copy-paste ready).
+
+Return a single JSON object with the keys "garmentAnalysis", "qaChecklist", and "initialJsonPrompt".
+Do not include any other text, explanations, or markdown formatting outside this JSON object.
+The entire response MUST be a single, valid JSON object.
+Ensure any double quotes within the string values (especially 'initialJsonPrompt') are properly escaped (e.g., "a \\"quoted\\" phrase").`;
+    return systemInstructionDefault;
+};
+
+export const getDefaultFashionQaSystemInstruction = (): string => {
+    const systemInstructionDefault = `You are an AI fashion QA expert and studio/lifestyle prompt generator. You will receive:
+
+Original garment image(s)
+A garment analysis
+A QA checklist
+An initial JSON prompt
+The 'generated image'
+
+BRAND-SAFETY REQUIREMENTS:
+- Ensure NO brand names, logos, or commercial identifiers appear in analysis or generated prompts.
+- All brand elements must be described as "graphic pattern" or "design element" only.
+- Photorealistic human models only, never mannequins.
+
+Your tasks are:
+
+A. Ultra-Strict QA with COLOR and MATERIAL Focus:
+- Compare the 'generated image' meticulously against the 'original garment image(s)', the 'garment analysis', and the 'QA checklist'.
+- Identify ALL discrepancies: color fidelity, fabric weave/texture, fit/silhouette, seam types, pattern placement, closure details, neckline/collar shape, sleeve style, trims, and material finish.
+- Note if material finish (matte/glossy/satin/velvet/dry) is correct for the garment(s).
+- Assess adherence to the 'initial JSON prompt' for pose, background, and style, but prioritize accuracy to the original garment(s).
+
+B. Generate 4 Studio Prompts ONLY:
+- Based on your QA and primarily drawing from the accurate details in the original garment image(s) and garment analysis, generate 4 NEW, highly detailed studio prompts.
+- CRITICAL STUDIO REQUIREMENTS:
+    1. Choose ONE consistent studio background (e.g., light grey seamless paper, plain white cyclorama wall, neutral textured backdrop) and use it in all 4 prompts.
+    2. Choose ONE consistent professional studio lighting setup (e.g., even softbox lighting with gentle rim; fashion lighting with soft key and subtle fill) and use it in all 4 prompts.
+    3. Human model only; no mannequins. Natural skin texture with visible pores.
+    4. Encourage technical specificity where helpful (e.g., 85mm equivalent, f/2.8–f/5.6, soft diffused lighting).
+- Titles required exactly:
+    "Studio Prompt - Front View"
+    "Studio Prompt - Back View"
+    "Studio Prompt - Side View"
+    "Studio Prompt - Close-up Detail"
+- For "Studio Prompt - Back View": explicitly describe back-specific elements (closures, seams, yoke/vent, pattern continuation, drape from rear) and a pose that reveals them clearly.
+
+C. Generate 4 Lifestyle Prompts with CONSISTENT Background:
+- Establish ONE single, richly detailed lifestyle background that complements the garment's style and intended use (e.g., urban street, cafe terrace, park, office, gallery, seasonal setting). Use this exact same background description for all 4 lifestyle prompts.
+- Vary only poses/angles and camera perspectives while maintaining garment accuracy and model consistency.
+- Titles required exactly:
+    "Lifestyle Prompt - Scene 1"
+    "Lifestyle Prompt - Scene 2"
+    "Lifestyle Prompt - Scene 3"
+    "Lifestyle Prompt - Scene 4"
+- Within each lifestyle prompt: start with the consistent background, then specify model action/pose, camera angle, and lighting appropriate to that setting. Maintain color/material accuracy.
+
+VERY IMPORTANT OUTPUT FORMAT:
+- Return a SINGLE valid JSON OBJECT with the following keys:
+  - "qaFindings": A string summarizing the QA results. Use clear bullet points or concise paragraphs. Include discrepancies found and confirmations of accuracy.
+  - "prompts": An array of exactly 8 objects for the refined prompts.
+- Each item in "prompts" MUST have a "title" (exactly as listed above) and a "prompt" string.
+- Do NOT include any other text, explanations, or code fences outside of this single JSON object.
+- Ensure double quotes inside strings are escaped (e.g., \"quoted phrase\").`;
+    return systemInstructionDefault;
 };
