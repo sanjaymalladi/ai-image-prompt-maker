@@ -12,6 +12,7 @@ if (!API_KEY || API_KEY.trim() === "") {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY! });
 const model = 'gemini-2.5-flash';
+const TEMPERATURE = 0.1;
 
 interface ImageInput extends FileConversionResult {} 
 
@@ -29,6 +30,11 @@ interface CharacterSheetPrompt {
 interface RefinedStudioPrompt { // Now also used for Lifestyle prompts
   title: string;
   prompt: string;
+}
+
+export interface QaAndPromptsResult {
+  qaFindings: string;
+  prompts: RefinedStudioPrompt[];
 }
 
 
@@ -107,6 +113,7 @@ Format your output as one rich, coherent paragraph. Start the prompt directly. D
       contents: { parts: parts },
       config: {
         systemInstruction: systemInstruction,
+        temperature: TEMPERATURE,
       }
     });
     
@@ -190,10 +197,15 @@ Ensure any double quotes within the prompt strings themselves are properly escap
       config: {
         systemInstruction: systemInstruction,
         responseMimeType: "application/json",
+        temperature: TEMPERATURE,
       }
     });
 
-    let jsonStr = response.text.trim();
+    const text = response.text;
+    if (!text) {
+      throw new Error("The API returned an empty JSON response for character sheet prompts.");
+    }
+    let jsonStr = text.trim();
     const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
     const match = jsonStr.match(fenceRegex);
     if (match && match[2]) {
@@ -308,10 +320,15 @@ Ensure any double quotes within the prompt strings themselves are properly escap
             config: {
                 systemInstruction: systemInstruction,
                 responseMimeType: "application/json",
+                temperature: TEMPERATURE,
             }
         });
 
-        let jsonStr = response.text.trim();
+        const text = response.text;
+        if (!text) {
+            throw new Error("The API returned an empty JSON response for refined character sheet prompts.");
+        }
+        let jsonStr = text.trim();
         const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
         const match = jsonStr.match(fenceRegex);
         if (match && match[2]) {
@@ -472,18 +489,18 @@ Ensure any double quotes within the string values (especially 'initialJsonPrompt
 
     const parts: any[] = [];
     garmentImages.forEach((img, idx) => {
-      parts.push({text: `Input Garment Image ${idx + 1}:`}); 
+      parts.push({text: `Input Garment Image ${idx + 1}:`});
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } })
     });
     if (backgroundRefImages && backgroundRefImages.length > 0) {
         parts.push({text: "Optional Background Reference Image(s):"});
-        backgroundRefImages.forEach((img, idx) => {
+        backgroundRefImages.forEach((img) => {
             parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
         });
     }
     if (modelRefImages && modelRefImages.length > 0) {
         parts.push({text: "Optional Model Reference Image(s):"});
-        modelRefImages.forEach((img, idx) => {
+        modelRefImages.forEach((img) => {
             parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
         });
     }
@@ -497,10 +514,15 @@ Ensure any double quotes within the string values (especially 'initialJsonPrompt
             config: {
                 systemInstruction: systemInstruction,
                 responseMimeType: "application/json",
+                temperature: TEMPERATURE,
             }
         });
 
-        let jsonStr = response.text.trim();
+        const text = response.text;
+        if (!text) {
+            throw new Error("The API returned an empty JSON response for fashion analysis.");
+        }
+        let jsonStr = text.trim();
         const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
         const match = jsonStr.match(fenceRegex);
         if (match && match[2]) {
@@ -543,7 +565,7 @@ export const performQaAndGenerateStudioPrompts = async (
     generatedFashionImage: ImageInput,
     analysisData: FashionPromptData
     // Optional: Pass backgroundRefImages and modelRefImages if they need to directly influence this step beyond analysisData
-): Promise<RefinedStudioPrompt[]> => {
+): Promise<QaAndPromptsResult> => {
     const systemInstruction = `You are an AI fashion QA expert and studio/lifestyle prompt generator. You will receive:
 
 Original garment image(s)
@@ -589,11 +611,13 @@ C. Generate 4 Lifestyle Prompts with CONSISTENT Background:
     "Lifestyle Prompt - Scene 4"
 - Within each lifestyle prompt: start with the consistent background, then specify model action/pose, camera angle, and lighting appropriate to that setting. Maintain color/material accuracy.
 
-VERY IMPORTANT OUTPUT FORMATTING FOR ALL 8 PROMPTS:
-- Your entire response MUST be a single, valid JSON array of 8 objects.
-- Each object MUST have a "title" field (exactly as listed above) and a "prompt" field (the generated text prompt as a string).
-- Do NOT include any other text, explanations, code block fences, or markdown formatting outside of this single JSON array.
-- Ensure that any double quotes (") within prompt strings are properly escaped (e.g., \"quoted phrase\").`;
+VERY IMPORTANT OUTPUT FORMAT:
+- Return a SINGLE valid JSON OBJECT with the following keys:
+  - "qaFindings": A string summarizing the QA results. Use clear bullet points or concise paragraphs. Include discrepancies found and confirmations of accuracy.
+  - "prompts": An array of exactly 8 objects for the refined prompts.
+- Each item in "prompts" MUST have a "title" (exactly as listed above) and a "prompt" string.
+- Do NOT include any other text, explanations, or code fences outside of this single JSON object.
+- Ensure double quotes inside strings are escaped (e.g., \"quoted phrase\").`;
 
     const parts: any[] = [];
     originalGarmentImages.forEach((img, index) => {
@@ -617,17 +641,27 @@ VERY IMPORTANT OUTPUT FORMATTING FOR ALL 8 PROMPTS:
             config: {
                 systemInstruction: systemInstruction,
                 responseMimeType: "application/json",
+                temperature: TEMPERATURE,
             }
         });
 
-        let jsonStr = response.text.trim();
+        const text = response.text;
+        if (!text) {
+            throw new Error("The API returned an empty JSON response for QA and refined prompts.");
+        }
+        let jsonStr = text.trim();
         const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
         const match = jsonStr.match(fenceRegex);
         if (match && match[2]) {
             jsonStr = match[2].trim();
         }
         
-        const parsedData = JSON.parse(jsonStr) as RefinedStudioPrompt[];
+        const parsed = JSON.parse(jsonStr) as { qaFindings: string; prompts: RefinedStudioPrompt[] };
+
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.qaFindings !== 'string' || !Array.isArray(parsed.prompts)) {
+            throw new Error("API response is not a JSON object with 'qaFindings' (string) and 'prompts' (array).");
+        }
+        const parsedData = parsed.prompts as RefinedStudioPrompt[];
         
         const expectedTitles = [
             "Studio Prompt - Front View",
@@ -661,7 +695,7 @@ VERY IMPORTANT OUTPUT FORMATTING FOR ALL 8 PROMPTS:
              throw new Error(`API response for refined prompts is missing expected titles: ${missingTitles.join(', ')}.`);
         }
 
-        return parsedData;
+        return { qaFindings: parsed.qaFindings.trim(), prompts: parsedData };
 
     } catch (error) {
         console.error("Error calling Gemini API for QA and refined prompts:", error);

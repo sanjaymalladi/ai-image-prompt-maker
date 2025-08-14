@@ -94,6 +94,7 @@ const App: React.FC = () => {
   const [fashionQaIsLoading, setFashionQaIsLoading] = useState<boolean>(false);
   const [fashionQaError, setFashionQaError] = useState<string | null>(null);
   const [refinedStudioPrompts, setRefinedStudioPrompts] = useState<RefinedStudioPromptItem[] | null>(null);
+  const [fashionQaFindings, setFashionQaFindings] = useState<string | null>(null);
 
   // State for Replicate Image Generation
   const [showReplicatePanel, setShowReplicatePanel] = useState<boolean>(false);
@@ -152,6 +153,7 @@ const App: React.FC = () => {
     setFashionQaIsLoading(false);
     setFashionQaError(null);
     setRefinedStudioPrompts(null);
+    setFashionQaFindings(null);
 
     // Reset Replicate states
     setShowReplicatePanel(false);
@@ -402,6 +404,7 @@ const App: React.FC = () => {
     setGeneratedFashionImageFile(null);
     setGeneratedFashionImagePreviewUrl(null);
     setRefinedStudioPrompts(null);
+    setFashionQaFindings(null);
     setFashionQaError(null);
     setFashionInitialJsonPromptCopied(false);
 
@@ -583,6 +586,7 @@ const App: React.FC = () => {
         };
         reader.readAsDataURL(file);
         setRefinedStudioPrompts(null); 
+        setFashionQaFindings(null);
         setFashionQaError(null); 
     }
     if (event.target) {
@@ -594,6 +598,7 @@ const App: React.FC = () => {
     setGeneratedFashionImageFile(null);
     setGeneratedFashionImagePreviewUrl(null);
     setRefinedStudioPrompts(null);
+    setFashionQaFindings(null);
     setFashionQaError(null);
   };
 
@@ -709,6 +714,7 @@ const App: React.FC = () => {
     setFashionQaIsLoading(true);
     setFashionQaError(null);
     setRefinedStudioPrompts(null);
+    setFashionQaFindings(null);
     setShowReplicatePanel(false); // Hide replicate panel if it was open for a previous QA'd prompt
 
     try {
@@ -721,7 +727,8 @@ const App: React.FC = () => {
             fashionPromptData
         );
         
-        setRefinedStudioPrompts(results.map(p => ({
+        setFashionQaFindings(results.qaFindings);
+        setRefinedStudioPrompts(results.prompts.map(p => ({
             id: `${p.title.replace(/\s+/g, '-')}-${Date.now()}`,
             title: p.title,
             prompt: p.prompt,
@@ -1607,6 +1614,15 @@ const App: React.FC = () => {
                             Perform QA & Generate All Prompts
                         </Button>
                     </div>
+
+                    {fashionQaFindings && !fashionQaIsLoading && (
+                        <div className="space-y-3">
+                            <h2 className="text-2xl font-semibold text-sky-400">QA Findings</h2>
+                            <p className="text-gray-200 bg-zinc-800 p-4 rounded-md whitespace-pre-wrap text-sm leading-relaxed pretty-scrollbar max-h-60 overflow-y-auto">
+                                {fashionQaFindings}
+                            </p>
+                        </div>
+                    )}
 
                     {refinedStudioPrompts && refinedStudioPrompts.length > 0 && !fashionQaIsLoading && (
                         <div className="space-y-6">
